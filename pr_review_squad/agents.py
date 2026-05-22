@@ -1,16 +1,17 @@
 """
 The three agents of the PR Code Review Squad.
-Each agent has a specialized system prompt and uses Google Gemini for inference
-via the official `google-genai` SDK.
+
+Each agent has a specialised system prompt. The underlying LLM provider is
+chosen per-agent via `squad.toml`; we talk to all providers through the
+OpenAI-compatible Chat Completions API, so a single SDK covers Gemini, Grok,
+OpenRouter, OpenAI, DeepSeek, Groq, …
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Optional
 
-from google import genai
-from google.genai import types as genai_types
+from openai import OpenAI
 
 
 SECURITY_AUDITOR_PROMPT = """You are a Senior Security Engineer. Your job is to review the provided Git Diff (code changes) and identify any potential security vulnerabilities, unsafe data handling, or exposure of sensitive information.
@@ -44,54 +45,75 @@ Rules:
 - Output ONLY the Markdown PR comment. Do not wrap it in code fences."""
 
 
-_client: Optional[genai.Client] = None
+AGENT_PROMPTS: dict[str, str] = {
+    "security_auditor": SECURITY_AUDITOR_PROMPT,
+    "optimization_expert": OPTIMIZATION_EXPERT_PROMPT,
+    "tech_lead": TECH_LEAD_PROMPT,
+}
 
-
-def configure_gemini(api_key: str) -> None:
-    """Initialise the module-level Gemini client."""
-    global _client
-    _client = genai.Client(api_key=api_key)
-
-
-def _get_client() -> genai.Client:
-    if _client is None:
-        raise RuntimeError("Gemini client not configured. Call configure_gemini(api_key) first.")
-    return _client
+AGENT_DISPLAY_NAMES: dict[str, str] = {
+    "security_auditor": "Security Auditor",
+    "optimization_expert": "Optimization Expert",
+    "tech_lead": "Tech Lead",
+}
 
 
 @dataclass
 class AgentResult:
     name: str
     output: str
+    provider: str
+    model: str
 
 
-class GeminiAgent:
-    """Lightweight wrapper around a Gemini model with a fixed system instruction."""
+class LLMAgent:
+    """One agent: a system prompt + the OpenAI-compatible client to talk to."""
 
-    def __init__(self, name: str, system_prompt: str, model_name: Optional[str] = None):
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        client: OpenAI,
+        model: str,
+        provider: str,
+        temperature: float = 0.4,
+    ):
         self.name = name
         self.system_prompt = system_prompt
-        self.model_name = model_name or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        self.client = client
+        self.model = model
+        self.provider = provider
+        self.temperature = temperature
 
     def run(self, user_input: str) -> AgentResult:
-        client = _get_client()
-        response = client.models.generate_content(
-            model=self.model_name,
-            contents=user_input,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=self.system_prompt,
-                temperature=0.4,
-            ),
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_input},
+            ],
+            temperature=self.temperature,
         )
-        text = (response.text or "").strip()
-        return AgentResult(name=self.name, output=text)
+        text = (response.choices[0].message.content or "").strip()
+        return AgentResult(self.name, text, self.provider, self.model)
 
 
-def build_squad(model_name: Optional[str] = None) -> tuple[GeminiAgent, GeminiAgent, GeminiAgent]:
-    security = GeminiAgent("Security Auditor", SECURITY_AUDITOR_PROMPT, model_name)
-    optimizer = GeminiAgent("Optimization Expert", OPTIMIZATION_EXPERT_PROMPT, model_name)
-    tech_lead = GeminiAgent("Tech Lead", TECH_LEAD_PROMPT, model_name)
-    return security, optimizer, tech_lead
+def build_agent(
+    agent_key: str,
+    client: OpenAI,
+    model: str,
+    provider: str,
+) -> LLMAgent:
+    """Factory: build an LLMAgent from a config key + an already-built client."""
+    if agent_key not in AGENT_PROMPTS:
+        raise ValueError(f"Unknown agent key: {agent_key!r}")
+    return LLMAgent(
+        name=AGENT_DISPLAY_NAMES[agent_key],
+        system_prompt=AGENT_PROMPTS[agent_key],
+        client=client,
+        model=model,
+        provider=provider,
+    )
 
 
 def synthesize_input(security_report: str, optimization_report: str) -> str:
@@ -100,4 +122,23 @@ def synthesize_input(security_report: str, optimization_report: str) -> str:
         f"{security_report}\n\n"
         "## Optimization Report\n"
         f"{optimization_report}\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Back-compat shims kept so older smoke tests / external callers still work.
+# ---------------------------------------------------------------------------
+
+
+def configure_gemini(_api_key: str) -> None:  # pragma: no cover
+    """Deprecated. Provider clients are now built per-agent via providers.py."""
+    return None
+
+
+def build_squad(
+    model_name: Optional[str] = None,  # noqa: ARG001
+) -> tuple[LLMAgent, LLMAgent, LLMAgent]:  # pragma: no cover
+    raise RuntimeError(
+        "build_squad() is no longer used directly. cli.py now assembles the "
+        "squad from squad.toml via providers.build_client + build_agent."
     )

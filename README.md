@@ -25,8 +25,11 @@
               (terminal + .md + 📋 clipboard)
 ```
 
-Powered by **Google Gemini** via the official `google-genai` SDK. **Free to run**
-with a Google AI Studio key. Pure-Python CLI — no DB, no server, no UI dependency.
+Powered by **any OpenAI-compatible LLM provider** — Google Gemini, xAI Grok,
+OpenRouter, OpenAI, DeepSeek, Groq, and more. **One agent, one provider, one
+model — your call.** No third-party multi-LLM library required; we just swap
+`base_url` per provider and call it a day. Pure-Python CLI — no DB, no server,
+no UI dependency.
 
 ---
 
@@ -76,6 +79,10 @@ PR comment will land in `pr_review_squad/reviews/`.
 
 ## 🔑 Getting your free Gemini API key
 
+> By default RoundTable AI uses **Google Gemini for all three agents** — so you
+> only need one key to get started. To mix providers, see the
+> [Multi-provider section](#-multi-provider-mode-the-fun-part) below.
+
 1. Go to **<https://aistudio.google.com/apikey>**
 2. Sign in with a Google account
 3. Click **"Create API key"** → "Create API key in new project"
@@ -88,6 +95,62 @@ PR comment will land in `pr_review_squad/reviews/`.
 
 Google AI Studio's free tier currently includes generous quota on
 `gemini-2.0-flash` — plenty for running this tool dozens of times a day.
+
+---
+
+## 🌐 Multi-provider mode (the fun part)
+
+RoundTable AI talks to LLMs via the **OpenAI-compatible Chat Completions API**,
+so any provider that speaks it works out of the box. Six are pre-wired:
+
+| Provider | Env var | Free tier? | Notes |
+|---|---|---|---|
+| Google Gemini | `GEMINI_API_KEY` | ✅ generous | Fast, great at code |
+| xAI Grok | `XAI_API_KEY` | small credit | Conversational, witty |
+| OpenRouter | `OPENROUTER_API_KEY` | some free models | Aggregator: Claude, GPT, Llama, … |
+| OpenAI | `OPENAI_API_KEY` | ❌ paid | GPT-4o, o1, … |
+| DeepSeek | `DEEPSEEK_API_KEY` | small credit | deepseek-chat, deepseek-reasoner |
+| Groq | `GROQ_API_KEY` | ✅ generous | Sub-second inference on Llama/Mixtral |
+
+### Pick a model per agent — edit `pr_review_squad/squad.toml`
+
+```toml
+[security_auditor]
+# Anthropic Claude is famously careful — ideal for security review.
+provider = "openrouter"
+model = "anthropic/claude-3.5-haiku"
+
+[optimization_expert]
+# Gemini Flash has strong, fast code reasoning.
+provider = "gemini"
+model = "gemini-2.0-flash"
+
+[tech_lead]
+# Grok writes warm, conversational prose — great for PR comments.
+provider = "grok"
+model = "grok-2-latest"
+```
+
+Then drop the matching keys into `pr_review_squad/.env` and run `make demo`.
+
+A ready-to-use config ships at
+[`pr_review_squad/squad.multi-provider.toml.example`](pr_review_squad/squad.multi-provider.toml.example) —
+just `cp` it over `squad.toml` to activate.
+
+### What you'll see
+
+```
+╭───────────── 🪑 The Round Table ──────────────╮
+│ 🔐 Security Auditor    openrouter  anthropic/claude-3.5-haiku │
+│ ⚡ Optimization Expert  gemini      gemini-2.0-flash           │
+│ 🧑‍💼 Tech Lead            grok        grok-2-latest              │
+╰───────────────────────────────────────────────╯
+```
+
+Each agent's panel labels which provider/model produced its output, and the
+final synthesised PR comment is tagged with the Tech Lead's model in its
+subtitle — so when you screen-record a demo, the multi-provider story is
+visible at a glance.
 
 ---
 
@@ -147,7 +210,9 @@ pr-review-squad [--sample | --file FILE | --pr-url URL]
 | `--sample` | Use the bundled vulnerable sample diff |
 | `--file PATH` | Review a unified diff from a local file |
 | `--pr-url URL` | Review a live GitHub PR (`https://github.com/<owner>/<repo>/pull/<n>`) |
-| `--model NAME` | Override the Gemini model for this run (e.g. `--model gemini-2.5-flash`) |
+| `--config PATH` | Use a non-default `squad.toml` (defaults to `pr_review_squad/squad.toml`) |
+| `--provider NAME` | Force **all three** agents to one provider (`gemini` / `grok` / `openrouter` / `openai` / `deepseek` / `groq`) |
+| `--model NAME` | Force **all three** agents to one model |
 | `--no-save` | Skip writing the markdown file (useful in CI) |
 | `--no-clipboard` | Skip copying to clipboard (useful in CI / headless) |
 | `-h, --help` | Show the built-in help |
@@ -222,26 +287,43 @@ The saved `.md` file is **GitHub-ready** — paste it straight into a PR comment
 ## 🛠️ Troubleshooting
 
 <details>
-<summary><b>"Missing GEMINI_API_KEY"</b></summary>
+<summary><b>"Missing API key(s) for your squad.toml"</b></summary>
 
-The CLI couldn't read your key. Make sure:
-- `pr_review_squad/.env` exists (you copied it from `.env.example`)
-- The line is `GEMINI_API_KEY=AIzaSy...` with **no quotes, no spaces**
-- You didn't leave the literal placeholder `your_gemini_api_key_here`
+The CLI lists exactly which env var is missing and where to sign up. Open
+`pr_review_squad/.env`, paste the missing key, and re-run.
+
+If you only want to run with Gemini, make sure your `squad.toml` still uses
+`provider = "gemini"` for all three agents (that's the default).
 </details>
 
 <details>
-<summary><b>"Gemini call failed: 404 ... model not found"</b></summary>
+<summary><b>"LLM call failed: 404 ... not found"</b></summary>
 
-The model name in `.env` (or your `--model` flag) isn't available on your key.
-Try one of these widely-available names:
-- `gemini-2.0-flash` (default — fast & free)
-- `gemini-2.5-flash` (newer)
-- `gemini-2.5-pro` (slower, higher quota tier)
+The model name in `squad.toml` (or your `--model` flag) doesn't exist for that
+provider. A few safe defaults per provider:
+
+| Provider | Known-good model |
+|---|---|
+| `gemini` | `gemini-2.0-flash`, `gemini-2.5-flash` |
+| `grok` | `grok-2-latest`, `grok-3` |
+| `openrouter` | `anthropic/claude-3.5-haiku`, `meta-llama/llama-3.3-70b-instruct` |
+| `openai` | `gpt-4o-mini`, `gpt-4o` |
+| `deepseek` | `deepseek-chat`, `deepseek-reasoner` |
+| `groq` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+
+Quick override without editing TOML:
 
 ```bash
-python pr_review_squad/cli.py --sample --model gemini-2.5-flash
+python pr_review_squad/cli.py --sample --provider gemini --model gemini-2.5-flash
 ```
+</details>
+
+<details>
+<summary><b>"LLM call failed: 401 ... unauthorized"</b></summary>
+
+The API key for that provider is wrong/expired. Re-check `.env` (no quotes, no
+trailing spaces) and that you're using the matching env var (e.g. `XAI_API_KEY`
+not `GROK_API_KEY`).
 </details>
 
 <details>
@@ -283,17 +365,20 @@ or the PR is in a private repo. For private repos add a `GITHUB_TOKEN` with the 
 
 ```
 RoundTable-Ai/
-├── Makefile                      # one-command shortcuts
-├── README.md                     # ← you're reading it
-├── .python-version               # pyenv hint (3.11)
+├── Makefile                              # one-command shortcuts
+├── README.md                             # ← you're reading it
+├── .python-version                       # pyenv hint (3.11)
 └── pr_review_squad/
-    ├── cli.py                    # argparse + rich UI + orchestration
-    ├── agents.py                 # the three system prompts + GeminiAgent wrapper
-    ├── github_fetcher.py         # GitHub REST API → unified diff
+    ├── cli.py                            # argparse + rich UI + orchestration
+    ├── agents.py                         # 3 system prompts + LLMAgent wrapper
+    ├── providers.py                      # provider catalog + squad config loader
+    ├── github_fetcher.py                 # GitHub REST API → unified diff
+    ├── squad.toml                        # which provider+model each agent uses
+    ├── squad.multi-provider.toml.example # ready-to-cp multi-provider config
     ├── requirements.txt
-    ├── .env.example              # copy → .env, paste your key
-    ├── samples/sample_diff.txt   # deliberately vulnerable demo file
-    └── reviews/                  # auto-generated PR-comment markdown (gitignored)
+    ├── .env.example                      # copy → .env, paste your keys
+    ├── samples/sample_diff.txt           # deliberately vulnerable demo file
+    └── reviews/                          # auto-generated PR-comment markdown
 ```
 
 ---
@@ -301,11 +386,11 @@ RoundTable-Ai/
 ## 🧭 Roadmap
 
 - [ ] **Streaming output** — agent responses stream token-by-token to the terminal
-- [ ] **`pip install .` entry-point** so `pr-review-squad` is a real binary on `$PATH`
+- [ ] **`pip install .` entry-point** so `roundtable-ai` is a real binary on `$PATH`
 - [ ] **GitHub Actions workflow** that runs RoundTable AI on every PR opened against this repo
-- [ ] **Token / cost summary** displayed at the end of each run
-- [ ] **Provider abstraction** so OpenAI, Anthropic, or xAI Grok keys can swap in via env
+- [ ] **Token / cost summary** displayed at the end of each run (now that we have multiple providers, this is extra interesting)
 - [ ] **`gh` CLI integration** to auto-post the synthesised comment to the PR
+- [x] ~~**Pluggable provider abstraction** (Grok / OpenAI / Anthropic) — done in v2~~
 
 ---
 

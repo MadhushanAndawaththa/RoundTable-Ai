@@ -1,4 +1,4 @@
-google-genai>=1.0.0
+openai>=1.40.0
 rich>=13.7.0
 pyperclip>=1.9.0
 requests>=2.32.0

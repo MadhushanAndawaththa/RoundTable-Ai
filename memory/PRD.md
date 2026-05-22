@@ -40,14 +40,19 @@ pr_review_squad/
 - ✅ Clear, friendly error when `GEMINI_API_KEY` is missing (with link to free-tier key)
 - ✅ End-to-end smoke test passing (rendering, save, clipboard fallback verified)
 
-## Iteration 2 (2026-05-22)
-- ✅ `--model` CLI flag to override Gemini model per-run
-- ✅ `--no-save` / `--no-clipboard` flags (CI-friendly)
-- ✅ Saved markdown now embeds raw Security & Optimization reports under collapsible `<details>` blocks
-- ✅ Friendly 404 error hint when an unknown model name is used
-- ✅ Comprehensive README rewrite (runbook with prereqs, quickstart, all modes, troubleshooting, layout, roadmap)
-- ✅ Demo sample sanitised so GitHub secret-scanning push protection no longer blocks
-- ✅ Git history rewritten to drop the secret-bearing commit; new clean history pushed
+## Iteration 3 (2026-05-22) — Multi-provider mode 🎉
+- ✅ Replaced `google-genai` with `openai` SDK as the **single unified client** for all providers
+- ✅ New `providers.py` with a 6-provider catalog (gemini, grok, openrouter, openai, deepseek, groq) — each one a 5-line `ProviderSpec`, trivial to extend
+- ✅ New `squad.toml` lets users assign a different provider+model to each agent
+- ✅ Ships with `squad.multi-provider.toml.example` showing rationale-driven mixing (Claude for security, Gemini for optimization, Grok for prose)
+- ✅ `cli.py` shows a **🪑 Round Table panel** at the start of every run with each agent's provider/model
+- ✅ Per-agent footnote (`via <provider> · <model>`) inside each agent's output panel
+- ✅ Final-comment subtitle (`synthesised by <provider> · <model>`)
+- ✅ New CLI flags: `--config PATH`, `--provider NAME` (force all to one provider for quick tests)
+- ✅ Clear, sectioned missing-key error showing exactly which env vars are needed + sign-up URLs
+- ✅ Backwards-compatible: existing single-key Gemini users need zero config changes (default `squad.toml` is all-Gemini)
+- ✅ README rewritten with a dedicated multi-provider section + provider comparison table
+- ✅ All five flows smoke-tested: default Gemini, missing-key, multi-provider TOML, `--provider` override, `--model` override
 
 ## Backlog
 ### P1

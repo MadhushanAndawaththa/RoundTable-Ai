@@ -1,0 +1,20 @@
+# Which model each agent uses. Edit me to mix providers.
+#
+# Supported providers: gemini, grok, openrouter, openai, deepseek, groq
+# Each provider needs its matching API key in .env (see .env.example).
+#
+# This default config uses Gemini for all three seats so you only need a
+# single free GEMINI_API_KEY to get running. For a true multi-provider setup,
+# copy squad.multi-provider.toml.example over this file and add the keys.
+
+[security_auditor]
+provider = "gemini"
+model = "gemini-2.0-flash"
+
+[optimization_expert]
+provider = "gemini"
+model = "gemini-2.0-flash"
+
+[tech_lead]
+provider = "gemini"
+model = "gemini-2.0-flash"

@@ -1,0 +1,23 @@
+# Multi-provider squad — each agent uses the model best suited to its job.
+# To activate: copy this file over squad.toml and add the matching keys to .env.
+#
+#   cp squad.multi-provider.toml.example squad.toml
+#
+# Rationale below is intentional — choose models that match each role's strength.
+
+[security_auditor]
+# Anthropic Claude is famously careful & detail-oriented — ideal for security review.
+# (via OpenRouter, which has a generous free tier on Haiku)
+provider = "openrouter"
+model = "anthropic/claude-3.5-haiku"
+
+[optimization_expert]
+# Gemini Flash has strong, fast code reasoning. xAI's Grok works equally well here.
+provider = "gemini"
+model = "gemini-2.0-flash"
+
+[tech_lead]
+# Grok writes warm, conversational prose — perfect for empathetic PR comments.
+# Swap to "deepseek" / "deepseek-chat" or "groq" / "llama-3.3-70b-versatile" if preferred.
+provider = "grok"
+model = "grok-2-latest"

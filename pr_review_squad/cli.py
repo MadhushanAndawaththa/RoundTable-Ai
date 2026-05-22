@@ -1,10 +1,13 @@
 """
-Automated PR Code Review Squad - CLI entry point.
+RoundTable AI — CLI entry point.
 
 Three agents review a Git diff in sequence:
   1. Security Auditor
   2. Optimization Expert
   3. Tech Lead (synthesizes the final PR comment)
+
+Each agent's LLM provider + model is chosen in `squad.toml`. All providers are
+called via the OpenAI-compatible Chat Completions API.
 """
 from __future__ import annotations
 
@@ -20,32 +23,44 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.syntax import Syntax
+from rich.table import Table
 from rich.text import Text
 
-from agents import build_squad, configure_gemini, synthesize_input
+from agents import build_agent, synthesize_input
 from github_fetcher import GitHubFetchError, fetch_pr_diff
+from providers import (
+    MissingKeyError,
+    SquadConfigError,
+    build_client,
+    find_default_config,
+    load_squad_config,
+    validate_keys_for_config,
+)
 
 
-# Dark IDE aesthetic - "monokai" / cyan accent palette
 console = Console(highlight=False)
 HERE = Path(__file__).resolve().parent
 REVIEWS_DIR = HERE / "reviews"
 SAMPLE_PATH = HERE / "samples" / "sample_diff.txt"
 
 
+# ---------------------------------------------------------------------------
+# Display helpers
+# ---------------------------------------------------------------------------
+
+
 def banner() -> None:
     art = Text.from_markup(
         "[bold cyan]"
-        "  ____  ____    ____            _                ____                       _ \n"
-        " |  _ \\|  _ \\  |  _ \\ _____   _(_) _____      __/ ___|  __ _ _   _  __ _  __| |\n"
-        " | |_) | |_) | | |_) / _ \\ \\ / / |/ _ \\ \\ /\\ / /\\___ \\ / _` | | | |/ _` |/ _` |\n"
-        " |  __/|  _ <  |  _ <  __/\\ V /| |  __/\\ V  V /  ___) | (_| | |_| | (_| | (_| |\n"
-        " |_|   |_| \\_\\ |_| \\_\\___| \\_/ |_|\\___| \\_/\\_/  |____/ \\__, |\\__,_|\\__,_|\\__,_|\n"
-        "                                                          |_|                   "
+        "  ____                       _ _____     _     _        _    ___ \n"
+        " |  _ \\ ___  _   _ _ __   __| |_   _|_ _| |__ | | ___  / \\  |_ _|\n"
+        " | |_) / _ \\| | | | '_ \\ / _` | | |/ _` | '_ \\| |/ _ \\/ _ \\  | | \n"
+        " |  _ < (_) | |_| | | | | (_| | | | (_| | |_) | |  __/ ___ \\ | | \n"
+        " |_| \\_\\___/ \\__,_|_| |_|\\__,_| |_|\\__,_|_.__/|_|\\___/_/   \\_\\___|\n"
         "[/bold cyan]"
     )
     subtitle = Text(
-        "  three agents · one verdict · zero merge regrets",
+        "  three seats · three agents · one PR comment",
         style="dim italic cyan",
     )
     console.print(art)
@@ -53,8 +68,53 @@ def banner() -> None:
     console.print(Rule(style="grey30"))
 
 
+def round_table_panel(config: dict[str, dict[str, str]]) -> Panel:
+    """Show which provider/model is sitting in each agent seat."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(justify="left", style="bold")
+    table.add_column(justify="left", style="cyan")
+    table.add_column(justify="left", style="dim")
+
+    rows = [
+        ("🔐 Security Auditor", "security_auditor"),
+        ("⚡ Optimization Expert", "optimization_expert"),
+        ("🧑‍💼 Tech Lead", "tech_lead"),
+    ]
+    for label, key in rows:
+        provider = config[key]["provider"]
+        model = config[key]["model"]
+        table.add_row(label, provider, model)
+
+    return Panel(table, title="[bold cyan]🪑 The Round Table[/bold cyan]", border_style="cyan")
+
+
+def render_diff_preview(diff: str, max_lines: int = 40) -> None:
+    lines = diff.splitlines()
+    snippet = "\n".join(lines[:max_lines])
+    if len(lines) > max_lines:
+        snippet += f"\n... ({len(lines) - max_lines} more lines)"
+    syntax = Syntax(snippet, "diff", theme="monokai", line_numbers=False, word_wrap=False)
+    console.print(Panel(syntax, title="[bold]git diff[/bold]", border_style="grey30"))
+
+
+def agent_panel(title: str, body: str, color: str, footnote: str = "") -> Panel:
+    inner: list = [Markdown(body) if body else Text("(empty)", style="dim")]
+    if footnote:
+        inner.append(Text(footnote, style="dim italic"))
+    return Panel(
+        Group(*inner),
+        title=f"[bold {color}]{title}[/bold {color}]",
+        border_style=color,
+        padding=(1, 2),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Diff loading
+# ---------------------------------------------------------------------------
+
+
 def load_diff(args: argparse.Namespace) -> tuple[str, str]:
-    """Returns (diff_text, source_label)."""
     if args.sample:
         if not SAMPLE_PATH.exists():
             console.print(f"[red]Sample diff not found at {SAMPLE_PATH}[/red]")
@@ -85,22 +145,9 @@ def load_diff(args: argparse.Namespace) -> tuple[str, str]:
     sys.exit(1)
 
 
-def render_diff_preview(diff: str, max_lines: int = 40) -> None:
-    lines = diff.splitlines()
-    snippet = "\n".join(lines[:max_lines])
-    if len(lines) > max_lines:
-        snippet += f"\n... ({len(lines) - max_lines} more lines)"
-    syntax = Syntax(snippet, "diff", theme="monokai", line_numbers=False, word_wrap=False)
-    console.print(Panel(syntax, title="[bold]git diff[/bold]", border_style="grey30"))
-
-
-def agent_panel(title: str, body: str, color: str) -> Panel:
-    return Panel(
-        Markdown(body) if body else Text("(empty)", style="dim"),
-        title=f"[bold {color}]{title}[/bold {color}]",
-        border_style=color,
-        padding=(1, 2),
-    )
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
 
 
 def copy_to_clipboard(text: str) -> bool:
@@ -116,87 +163,158 @@ def copy_to_clipboard(text: str) -> bool:
 def save_review(
     final_markdown: str,
     source_label: str,
-    security_report: str = "",
-    optimization_report: str = "",
+    security_report: str,
+    optimization_report: str,
+    squad_summary: str,
 ) -> Path:
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     path = REVIEWS_DIR / f"review_{ts}.md"
     header = (
-        f"<!-- PR Review Squad · {dt.datetime.now().isoformat(timespec='seconds')} -->\n"
-        f"<!-- Source: {source_label} -->\n\n"
+        f"<!-- RoundTable AI · {dt.datetime.now().isoformat(timespec='seconds')} -->\n"
+        f"<!-- Source: {source_label} -->\n"
+        f"<!-- Squad:  {squad_summary} -->\n\n"
     )
-    raw_block = ""
-    if security_report or optimization_report:
-        raw_block = (
-            "\n\n---\n\n"
-            "<details>\n<summary>🔐 Raw Security Auditor report</summary>\n\n"
-            f"{security_report or '_(empty)_'}\n\n"
-            "</details>\n\n"
-            "<details>\n<summary>⚡ Raw Optimization Expert report</summary>\n\n"
-            f"{optimization_report or '_(empty)_'}\n\n"
-            "</details>\n"
-        )
+    raw_block = (
+        "\n\n---\n\n"
+        "<details>\n<summary>🔐 Raw Security Auditor report</summary>\n\n"
+        f"{security_report or '_(empty)_'}\n\n"
+        "</details>\n\n"
+        "<details>\n<summary>⚡ Raw Optimization Expert report</summary>\n\n"
+        f"{optimization_report or '_(empty)_'}\n\n"
+        "</details>\n"
+    )
     path.write_text(header + final_markdown + raw_block + "\n")
     return path
+
+
+def render_missing_keys(missing) -> Panel:
+    lines: list[Text] = [
+        Text.from_markup(
+            "[bold red]Missing API key(s) for your squad.toml[/bold red]\n"
+        )
+    ]
+    for spec in missing:
+        lines.append(
+            Text.from_markup(
+                f"  • [bold]{spec.api_key_env}[/bold]  →  "
+                f"get one at [link]{spec.signup_url}[/link]  "
+                f"[dim]({spec.notes})[/dim]"
+            )
+        )
+    lines.append(Text.from_markup("\nAdd the missing keys to [bold].env[/bold] and re-run."))
+    return Panel(Group(*lines), border_style="red")
+
+
+# ---------------------------------------------------------------------------
+# Main entry
+# ---------------------------------------------------------------------------
 
 
 def run(args: argparse.Namespace) -> int:
     load_dotenv(HERE / ".env")
     load_dotenv()  # also pick up cwd .env if present
 
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key or api_key == "your_gemini_api_key_here":
-        console.print(
-            Panel(
-                Text.from_markup(
-                    "[bold red]Missing GEMINI_API_KEY[/bold red]\n\n"
-                    "Grab a free key at [link]https://aistudio.google.com/apikey[/link] "
-                    "and add it to [bold].env[/bold] next to this script:\n\n"
-                    "  [green]GEMINI_API_KEY=your_key_here[/green]"
-                ),
-                border_style="red",
-            )
-        )
+    # --- Load squad config ---
+    config_path = Path(args.config).resolve() if args.config else find_default_config(HERE)
+    try:
+        config = load_squad_config(config_path)
+    except SquadConfigError as exc:
+        console.print(Panel(Text(str(exc), style="red"), border_style="red"))
+        return 4
+
+    # --- Apply CLI overrides ---
+    if args.model:
+        for agent_key in config:
+            config[agent_key]["model"] = args.model
+    if args.provider:
+        for agent_key in config:
+            config[agent_key]["provider"] = args.provider
+
+    # --- Validate keys ---
+    missing = validate_keys_for_config(config)
+    if missing:
+        banner()
+        console.print(round_table_panel(config))
+        console.print(render_missing_keys(missing))
         return 2
 
-    configure_gemini(api_key)
-
     banner()
+    console.print(round_table_panel(config))
 
-    model_name = args.model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-
+    # --- Load diff ---
     diff, source_label = load_diff(args)
-    console.print(f"[dim]source:[/dim] [bold]{source_label}[/bold]   "
-                  f"[dim]model:[/dim] [bold]{model_name}[/bold]\n")
+    console.print(f"\n[dim]source:[/dim] [bold]{source_label}[/bold]")
+    if config_path:
+        console.print(f"[dim]config:[/dim] [bold]{config_path.name}[/bold]\n")
     render_diff_preview(diff)
 
-    security, optimizer, tech_lead = build_squad(model_name=model_name)
-
+    # --- Build per-agent clients & agents ---
+    # Cache one client per unique provider to avoid re-creating identical clients.
+    client_cache: dict[str, object] = {}
     try:
-        # --- Agent 1: Security Auditor ---
-        with console.status("[bold red]Security Auditor scanning for vulnerabilities…[/bold red]", spinner="dots"):
+        for cfg in config.values():
+            p = cfg["provider"]
+            if p not in client_cache:
+                client_cache[p] = build_client(p)
+    except MissingKeyError as exc:
+        console.print(Panel(Text(str(exc), style="red"), border_style="red"))
+        return 2
+
+    security = build_agent(
+        "security_auditor",
+        client_cache[config["security_auditor"]["provider"]],  # type: ignore[arg-type]
+        config["security_auditor"]["model"],
+        config["security_auditor"]["provider"],
+    )
+    optimizer = build_agent(
+        "optimization_expert",
+        client_cache[config["optimization_expert"]["provider"]],  # type: ignore[arg-type]
+        config["optimization_expert"]["model"],
+        config["optimization_expert"]["provider"],
+    )
+    tech_lead = build_agent(
+        "tech_lead",
+        client_cache[config["tech_lead"]["provider"]],  # type: ignore[arg-type]
+        config["tech_lead"]["model"],
+        config["tech_lead"]["provider"],
+    )
+
+    # --- Run the agents ---
+    try:
+        with console.status(
+            f"[bold red]Security Auditor scanning… ({security.provider}/{security.model})[/bold red]",
+            spinner="dots",
+        ):
             sec = security.run(diff)
-        console.print(agent_panel("🔐 Security Auditor", sec.output, "red"))
+        console.print(agent_panel(
+            "🔐 Security Auditor", sec.output, "red",
+            footnote=f"via {sec.provider} · {sec.model}",
+        ))
 
-        # --- Agent 2: Optimization Expert ---
-        with console.status("[bold yellow]Optimization Expert profiling the change…[/bold yellow]", spinner="dots"):
+        with console.status(
+            f"[bold yellow]Optimization Expert profiling… ({optimizer.provider}/{optimizer.model})[/bold yellow]",
+            spinner="dots",
+        ):
             opt = optimizer.run(diff)
-        console.print(agent_panel("⚡ Optimization Expert", opt.output, "yellow"))
+        console.print(agent_panel(
+            "⚡ Optimization Expert", opt.output, "yellow",
+            footnote=f"via {opt.provider} · {opt.model}",
+        ))
 
-        # --- Agent 3: Tech Lead ---
-        with console.status("[bold green]Tech Lead synthesizing the PR comment…[/bold green]", spinner="dots"):
+        with console.status(
+            f"[bold green]Tech Lead synthesizing… ({tech_lead.provider}/{tech_lead.model})[/bold green]",
+            spinner="dots",
+        ):
             lead = tech_lead.run(synthesize_input(sec.output, opt.output))
     except Exception as exc:  # noqa: BLE001 - surface SDK errors as friendly text
         msg = str(exc)
         hint = ""
-        if "404" in msg or "not found" in msg.lower():
-            hint = (
-                f"\n\n[dim]The model [bold]{model_name}[/bold] was not found. "
-                "Try [bold]--model gemini-2.5-flash[/bold] or "
-                "[bold]--model gemini-2.0-flash[/bold].[/dim]"
-            )
-        console.print(Panel(Text.from_markup(f"[red]Gemini call failed:[/red] {msg}{hint}"), border_style="red"))
+        if "404" in msg or "not found" in msg.lower() or "does not exist" in msg.lower():
+            hint = "\n\n[dim]Tip: the model name might be wrong for that provider. Check the provider's docs.[/dim]"
+        elif "401" in msg or "unauthorized" in msg.lower():
+            hint = "\n\n[dim]Tip: your API key was rejected. Re-check the value in .env.[/dim]"
+        console.print(Panel(Text.from_markup(f"[red]LLM call failed:[/red] {msg}{hint}"), border_style="red"))
         return 3
 
     console.print(Rule("[bold cyan]Final PR Comment[/bold cyan]", style="cyan"))
@@ -205,15 +323,20 @@ def run(args: argparse.Namespace) -> int:
             Markdown(lead.output),
             border_style="cyan",
             padding=(1, 2),
+            subtitle=f"[dim]synthesised by {lead.provider} · {lead.model}[/dim]",
+            subtitle_align="right",
         )
     )
 
     # --- Persist + clipboard ---
+    squad_summary = ", ".join(
+        f"{key}={cfg['provider']}/{cfg['model']}" for key, cfg in config.items()
+    )
     footer_lines = []
     if args.no_save:
         footer_lines.append(Text.from_markup("📝 [dim]--no-save: skipped writing markdown file[/dim]"))
     else:
-        saved_path = save_review(lead.output, source_label, sec.output, opt.output)
+        saved_path = save_review(lead.output, source_label, sec.output, opt.output, squad_summary)
         footer_lines.append(Text.from_markup(f"📝 Saved to [bold]{saved_path}[/bold]"))
 
     if args.no_clipboard:
@@ -234,14 +357,16 @@ def run(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="pr-review-squad",
-        description="Run a 3-agent code review squad over a git diff (GitHub PR, file, or sample).",
+        prog="roundtable-ai",
+        description="Run a 3-agent multi-LLM code review squad over a git diff (GitHub PR, file, or sample).",
     )
     src = p.add_mutually_exclusive_group()
     src.add_argument("--pr-url", help="GitHub PR URL, e.g. https://github.com/psf/requests/pull/6800")
     src.add_argument("--file", help="Path to a .diff or .txt file containing a unified diff")
     src.add_argument("--sample", action="store_true", help="Use the bundled vulnerable sample diff")
-    p.add_argument("--model", help="Gemini model name (overrides GEMINI_MODEL env). e.g. gemini-2.5-flash")
+    p.add_argument("--config", help="Path to a squad.toml (defaults to ./squad.toml)")
+    p.add_argument("--provider", help="Force all three agents to use this provider (overrides squad.toml)")
+    p.add_argument("--model", help="Force all three agents to use this model (overrides squad.toml)")
     p.add_argument("--no-save", action="store_true", help="Don't write the synthesised comment to reviews/")
     p.add_argument("--no-clipboard", action="store_true", help="Don't copy the synthesised comment to the clipboard")
     return p
