@@ -40,6 +40,15 @@ pr_review_squad/
 - ✅ Clear, friendly error when `GEMINI_API_KEY` is missing (with link to free-tier key)
 - ✅ End-to-end smoke test passing (rendering, save, clipboard fallback verified)
 
+## Iteration 2 (2026-05-22)
+- ✅ `--model` CLI flag to override Gemini model per-run
+- ✅ `--no-save` / `--no-clipboard` flags (CI-friendly)
+- ✅ Saved markdown now embeds raw Security & Optimization reports under collapsible `<details>` blocks
+- ✅ Friendly 404 error hint when an unknown model name is used
+- ✅ Comprehensive README rewrite (runbook with prereqs, quickstart, all modes, troubleshooting, layout, roadmap)
+- ✅ Demo sample sanitised so GitHub secret-scanning push protection no longer blocks
+- ✅ Git history rewritten to drop the secret-bearing commit; new clean history pushed
+
 ## Backlog
 ### P1
 - Streaming responses (token-by-token agent output)

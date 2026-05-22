@@ -113,7 +113,12 @@ def copy_to_clipboard(text: str) -> bool:
         return False
 
 
-def save_review(markdown: str, source_label: str) -> Path:
+def save_review(
+    final_markdown: str,
+    source_label: str,
+    security_report: str = "",
+    optimization_report: str = "",
+) -> Path:
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     path = REVIEWS_DIR / f"review_{ts}.md"
@@ -121,7 +126,18 @@ def save_review(markdown: str, source_label: str) -> Path:
         f"<!-- PR Review Squad · {dt.datetime.now().isoformat(timespec='seconds')} -->\n"
         f"<!-- Source: {source_label} -->\n\n"
     )
-    path.write_text(header + markdown + "\n")
+    raw_block = ""
+    if security_report or optimization_report:
+        raw_block = (
+            "\n\n---\n\n"
+            "<details>\n<summary>🔐 Raw Security Auditor report</summary>\n\n"
+            f"{security_report or '_(empty)_'}\n\n"
+            "</details>\n\n"
+            "<details>\n<summary>⚡ Raw Optimization Expert report</summary>\n\n"
+            f"{optimization_report or '_(empty)_'}\n\n"
+            "</details>\n"
+        )
+    path.write_text(header + final_markdown + raw_block + "\n")
     return path
 
 
@@ -148,26 +164,40 @@ def run(args: argparse.Namespace) -> int:
 
     banner()
 
+    model_name = args.model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
     diff, source_label = load_diff(args)
     console.print(f"[dim]source:[/dim] [bold]{source_label}[/bold]   "
-                  f"[dim]model:[/dim] [bold]{os.environ.get('GEMINI_MODEL', 'gemini-2.0-flash')}[/bold]\n")
+                  f"[dim]model:[/dim] [bold]{model_name}[/bold]\n")
     render_diff_preview(diff)
 
-    security, optimizer, tech_lead = build_squad()
+    security, optimizer, tech_lead = build_squad(model_name=model_name)
 
-    # --- Agent 1: Security Auditor ---
-    with console.status("[bold red]Security Auditor scanning for vulnerabilities…[/bold red]", spinner="dots"):
-        sec = security.run(diff)
-    console.print(agent_panel("🔐 Security Auditor", sec.output, "red"))
+    try:
+        # --- Agent 1: Security Auditor ---
+        with console.status("[bold red]Security Auditor scanning for vulnerabilities…[/bold red]", spinner="dots"):
+            sec = security.run(diff)
+        console.print(agent_panel("🔐 Security Auditor", sec.output, "red"))
 
-    # --- Agent 2: Optimization Expert ---
-    with console.status("[bold yellow]Optimization Expert profiling the change…[/bold yellow]", spinner="dots"):
-        opt = optimizer.run(diff)
-    console.print(agent_panel("⚡ Optimization Expert", opt.output, "yellow"))
+        # --- Agent 2: Optimization Expert ---
+        with console.status("[bold yellow]Optimization Expert profiling the change…[/bold yellow]", spinner="dots"):
+            opt = optimizer.run(diff)
+        console.print(agent_panel("⚡ Optimization Expert", opt.output, "yellow"))
 
-    # --- Agent 3: Tech Lead ---
-    with console.status("[bold green]Tech Lead synthesizing the PR comment…[/bold green]", spinner="dots"):
-        lead = tech_lead.run(synthesize_input(sec.output, opt.output))
+        # --- Agent 3: Tech Lead ---
+        with console.status("[bold green]Tech Lead synthesizing the PR comment…[/bold green]", spinner="dots"):
+            lead = tech_lead.run(synthesize_input(sec.output, opt.output))
+    except Exception as exc:  # noqa: BLE001 - surface SDK errors as friendly text
+        msg = str(exc)
+        hint = ""
+        if "404" in msg or "not found" in msg.lower():
+            hint = (
+                f"\n\n[dim]The model [bold]{model_name}[/bold] was not found. "
+                "Try [bold]--model gemini-2.5-flash[/bold] or "
+                "[bold]--model gemini-2.0-flash[/bold].[/dim]"
+            )
+        console.print(Panel(Text.from_markup(f"[red]Gemini call failed:[/red] {msg}{hint}"), border_style="red"))
+        return 3
 
     console.print(Rule("[bold cyan]Final PR Comment[/bold cyan]", style="cyan"))
     console.print(
@@ -179,18 +209,26 @@ def run(args: argparse.Namespace) -> int:
     )
 
     # --- Persist + clipboard ---
-    saved_path = save_review(lead.output, source_label)
-    clipboard_ok = copy_to_clipboard(lead.output)
+    footer_lines = []
+    if args.no_save:
+        footer_lines.append(Text.from_markup("📝 [dim]--no-save: skipped writing markdown file[/dim]"))
+    else:
+        saved_path = save_review(lead.output, source_label, sec.output, opt.output)
+        footer_lines.append(Text.from_markup(f"📝 Saved to [bold]{saved_path}[/bold]"))
 
-    footer = Group(
-        Text.from_markup(f"📝 Saved to [bold]{saved_path}[/bold]"),
-        Text.from_markup(
-            "📋 Copied to clipboard"
-            if clipboard_ok
-            else "📋 [dim]Clipboard unavailable on this system (install xclip/xsel or run in a desktop session)[/dim]"
-        ),
-    )
-    console.print(Panel(footer, border_style="grey30"))
+    if args.no_clipboard:
+        footer_lines.append(Text.from_markup("📋 [dim]--no-clipboard: skipped clipboard copy[/dim]"))
+    else:
+        clipboard_ok = copy_to_clipboard(lead.output)
+        footer_lines.append(
+            Text.from_markup(
+                "📋 Copied to clipboard"
+                if clipboard_ok
+                else "📋 [dim]Clipboard unavailable on this system (install xclip/xsel or run in a desktop session)[/dim]"
+            )
+        )
+
+    console.print(Panel(Group(*footer_lines), border_style="grey30"))
     return 0
 
 
@@ -203,6 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--pr-url", help="GitHub PR URL, e.g. https://github.com/psf/requests/pull/6800")
     src.add_argument("--file", help="Path to a .diff or .txt file containing a unified diff")
     src.add_argument("--sample", action="store_true", help="Use the bundled vulnerable sample diff")
+    p.add_argument("--model", help="Gemini model name (overrides GEMINI_MODEL env). e.g. gemini-2.5-flash")
+    p.add_argument("--no-save", action="store_true", help="Don't write the synthesised comment to reviews/")
+    p.add_argument("--no-clipboard", action="store_true", help="Don't copy the synthesised comment to the clipboard")
     return p
 
 
