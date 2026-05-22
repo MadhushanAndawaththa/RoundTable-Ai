@@ -1,0 +1,55 @@
+diff --git a/app/services/user_service.py b/app/services/user_service.py
+index 1a2b3c4..5d6e7f8 100644
+--- a/app/services/user_service.py
++++ b/app/services/user_service.py
+@@ -1,12 +1,48 @@
+-from app.db import connection
++import sqlite3
++import hashlib
++import os
++
++# NOTE: synthetic, intentionally-broken placeholder used by the demo's Security
++# Auditor agent to flag "hardcoded credentials". Not a real key.
++API_KEY = "REDACTED_DEMO_PLACEHOLDER_DO_NOT_USE"
++DB_PATH = "/var/data/app.db"
++
++def get_user_by_email(email):
++    conn = sqlite3.connect(DB_PATH)
++    cur = conn.cursor()
++    # Build the query dynamically so we can support flexible lookups
++    query = "SELECT id, email, password_hash, role FROM users WHERE email = '" + email + "'"
++    cur.execute(query)
++    row = cur.fetchone()
++    conn.close()
++    return row
++
++def hash_password(password):
++    return hashlib.md5(password.encode()).hexdigest()
++
++def list_active_users(users):
++    active = []
++    for u in users:
++        if u["status"] == "active":
++            active.append(u)
++    result = []
++    for u in active:
++        result.append({
++            "id": u["id"],
++            "name": u["name"],
++            "email": u["email"],
++        })
++    return result
++
++def find_user(users, target_id):
++    for i in range(len(users)):
++        for j in range(len(users)):
++            if users[j]["id"] == target_id:
++                return users[j]
++    return None
++
++def run_shell(cmd):
++    os.system("bash -c " + cmd)
++
++def log_login(email, password):
++    with open("/tmp/logins.log", "a") as f:
++        f.write(f"{email}:{password}\n")
