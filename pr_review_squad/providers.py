@@ -39,6 +39,8 @@ class ProviderSpec:
     default_fast_model: str = ""
     default_best_model: str = ""
     known_models: tuple[str, ...] = ()
+    request_token_limits: dict[str, int] | None = None
+    review_model_order: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,16 @@ class ModelValidationIssue:
     provider: str
     model: str
     message: str
+
+
+@dataclass(frozen=True)
+class ModelPlan:
+    requested_model: str
+    selected_model: Optional[str]
+    estimated_tokens: int
+    limit_tokens: Optional[int]
+    auto_selected: bool
+    message: str = ""
 
 
 MODEL_ALIASES = {
@@ -67,6 +79,7 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         default_fast_model="gemini-2.0-flash",
         default_best_model="gemini-2.5-flash",
         known_models=("gemini-2.0-flash", "gemini-2.5-flash"),
+        review_model_order=("gemini-2.0-flash", "gemini-2.5-flash"),
     ),
     "grok": ProviderSpec(
         name="grok",
@@ -77,6 +90,7 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         default_fast_model="grok-2-latest",
         default_best_model="grok-3",
         known_models=("grok-2", "grok-2-latest", "grok-3"),
+        review_model_order=("grok-2-latest", "grok-3"),
     ),
     "openrouter": ProviderSpec(
         name="openrouter",
@@ -90,6 +104,10 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             "anthropic/claude-3.5-haiku",
             "meta-llama/llama-3.3-70b-instruct",
         ),
+        review_model_order=(
+            "anthropic/claude-3.5-haiku",
+            "meta-llama/llama-3.3-70b-instruct",
+        ),
     ),
     "openai": ProviderSpec(
         name="openai",
@@ -100,6 +118,7 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         default_fast_model="gpt-4o-mini",
         default_best_model="gpt-4o",
         known_models=("gpt-4o-mini", "gpt-4o"),
+        review_model_order=("gpt-4o-mini", "gpt-4o"),
     ),
     "deepseek": ProviderSpec(
         name="deepseek",
@@ -110,6 +129,7 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         default_fast_model="deepseek-chat",
         default_best_model="deepseek-reasoner",
         known_models=("deepseek-chat", "deepseek-reasoner"),
+        review_model_order=("deepseek-chat", "deepseek-reasoner"),
     ),
     "groq": ProviderSpec(
         name="groq",
@@ -132,6 +152,25 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             "openai/gpt-oss-20b",
             "openai/gpt-oss-safeguard-20b",
             "qwen/qwen3-32b",
+        ),
+        request_token_limits={
+            "allam-2-7b": 6000,
+            "groq/compound": 70000,
+            "groq/compound-mini": 70000,
+            "llama-3.1-8b-instant": 6000,
+            "llama-3.3-70b-versatile": 12000,
+            "meta-llama/llama-4-scout-17b-16e-instruct": 30000,
+            "meta-llama/llama-prompt-guard-2-22m": 15000,
+            "meta-llama/llama-prompt-guard-2-86m": 15000,
+            "openai/gpt-oss-120b": 8000,
+            "openai/gpt-oss-20b": 8000,
+            "openai/gpt-oss-safeguard-20b": 8000,
+            "qwen/qwen3-32b": 6000,
+        },
+        review_model_order=(
+            "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
         ),
     ),
 }
@@ -213,11 +252,109 @@ def resolve_config_models(config: dict[str, dict[str, str]]) -> dict[str, dict[s
     resolved: dict[str, dict[str, str]] = {}
     for agent, cfg in config.items():
         provider_name = cfg["provider"]
+        requested_model = cfg["model"].strip()
         resolved[agent] = {
             "provider": provider_name,
-            "model": resolve_model_alias(provider_name, cfg["model"]),
+            "requested_model": requested_model,
+            "model": resolve_model_alias(provider_name, requested_model),
         }
     return resolved
+
+
+def is_model_alias(model_name: str) -> bool:
+    return model_name.strip() in MODEL_ALIASES
+
+
+def get_model_request_limit(provider_name: str, model_name: str) -> Optional[int]:
+    spec = KNOWN_PROVIDERS[provider_name]
+    limits = spec.request_token_limits or {}
+    return limits.get(model_name)
+
+
+def plan_model_for_request(
+    provider_name: str,
+    requested_model: str,
+    resolved_model: str,
+    estimated_tokens: int,
+) -> ModelPlan:
+    spec = KNOWN_PROVIDERS[provider_name]
+    current_limit = get_model_request_limit(provider_name, resolved_model)
+    if current_limit is None or estimated_tokens <= current_limit:
+        return ModelPlan(
+            requested_model=requested_model,
+            selected_model=resolved_model,
+            estimated_tokens=estimated_tokens,
+            limit_tokens=current_limit,
+            auto_selected=False,
+        )
+
+    if is_model_alias(requested_model):
+        for candidate in spec.review_model_order:
+            candidate_limit = get_model_request_limit(provider_name, candidate)
+            if candidate_limit is None:
+                continue
+            if estimated_tokens <= candidate_limit:
+                return ModelPlan(
+                    requested_model=requested_model,
+                    selected_model=candidate,
+                    estimated_tokens=estimated_tokens,
+                    limit_tokens=candidate_limit,
+                    auto_selected=candidate != resolved_model,
+                    message=(
+                        f"Estimated request size is ~{estimated_tokens} tokens, so "
+                        f"{requested_model!r} was upgraded from {resolved_model!r} to {candidate!r}."
+                    ) if candidate != resolved_model else "",
+                )
+
+    largest_model = None
+    largest_limit = None
+    for candidate in spec.review_model_order:
+        candidate_limit = get_model_request_limit(provider_name, candidate)
+        if candidate_limit is None:
+            continue
+        if largest_limit is None or candidate_limit > largest_limit:
+            largest_model = candidate
+            largest_limit = candidate_limit
+
+    if largest_model and largest_limit and estimated_tokens <= largest_limit:
+        return ModelPlan(
+            requested_model=requested_model,
+            selected_model=None,
+            estimated_tokens=estimated_tokens,
+            limit_tokens=largest_limit,
+            auto_selected=False,
+            message=(
+                f"Estimated request size is ~{estimated_tokens} tokens, which exceeds the explicitly selected "
+                f"model {resolved_model!r} limit of {current_limit}. A larger built-in review model "
+                f"{largest_model!r} can fit this request, but explicit model selections are not auto-upgraded."
+            ),
+        )
+
+    if largest_model and largest_limit:
+        return ModelPlan(
+            requested_model=requested_model,
+            selected_model=None,
+            estimated_tokens=estimated_tokens,
+            limit_tokens=largest_limit,
+            auto_selected=False,
+            message=(
+                f"Estimated request size is ~{estimated_tokens} tokens, which exceeds the selected "
+                f"model {resolved_model!r} limit of {current_limit} and the largest built-in review model "
+                f"{largest_model!r} limit of {largest_limit}."
+            ),
+        )
+
+    return ModelPlan(
+        requested_model=requested_model,
+        selected_model=None,
+        estimated_tokens=estimated_tokens,
+        limit_tokens=current_limit,
+        auto_selected=False,
+        message=(
+            f"Estimated request size is ~{estimated_tokens} tokens, which exceeds the selected model "
+            f"{resolved_model!r} limit of {current_limit}."
+        ),
+    )
 
 
 def validate_model_selection(

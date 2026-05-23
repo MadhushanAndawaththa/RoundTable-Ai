@@ -4,20 +4,21 @@
 # Each provider needs its matching API key in .env (see .env.example).
 #
 # Default config is Groq-only so one free GROQ_API_KEY is enough to get
-# running. The two reviewer seats use the higher-throughput 8B model; the
-# tech lead uses the stronger 70B model for the final synthesis.
+# running. The two reviewer seats start with the fast alias and auto-upgrade
+# to a larger Groq review model if the diff would exceed the smaller model's
+# request limit. The tech lead uses the best alias for the final synthesis.
 #
 # Temporary override without editing this file:
-#   python cli.py --sample --provider groq --model llama-3.1-8b-instant
+#   python cli.py --sample --provider groq --model default-best
 
 [security_auditor]
 provider = "groq"
-model = "llama-3.1-8b-instant"
+model = "default-fast"
 
 [optimization_expert]
 provider = "groq"
-model = "llama-3.1-8b-instant"
+model = "default-fast"
 
 [tech_lead]
 provider = "groq"
-model = "llama-3.3-70b-versatile"
+model = "default-best"
