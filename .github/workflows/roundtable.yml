@@ -61,7 +61,11 @@ jobs:
           {
             echo "## 🪑 RoundTable AI review"
             echo
-            cat "${{ runner.temp }}/review.md"
+            if [[ -f "${{ runner.temp }}/review.md" ]]; then
+              cat "${{ runner.temp }}/review.md"
+            else
+              echo "Review output was not created. Check the failing workflow step above for the exact reason."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post review as PR comment
