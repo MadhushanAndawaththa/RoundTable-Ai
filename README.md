@@ -122,6 +122,13 @@ match the `provider` values in `pr_review_squad/squad.toml`.
 The current `pr_review_squad/squad.toml` in this repo uses **Groq for all three
 agents**, so **one free key is enough to run everything as-is:**
 
+- The two reviewer seats use `default-fast`
+- The Tech Lead seat uses `default-best`
+- On Groq, `default-fast` can auto-upgrade to a larger built-in review model if
+  the diff would exceed the smaller model's request limit
+- If you explicitly pin a model ID instead of using an alias, the CLI will fail
+  early with an explanation rather than wasting tokens on a provider-side 413
+
 1. Go to <https://console.groq.com/keys> → sign in → **Create API key**
 2. Paste it into `pr_review_squad/.env`:
    ```ini
@@ -205,7 +212,12 @@ model = "default-best"
 ```
 
 `default-fast` and `default-best` resolve to a built-in recommended model for
-that provider.
+that provider. On Groq, the aliases can also auto-upgrade to a larger built-in
+review model when a diff is too large for the smaller default.
+
+If you explicitly set a model ID such as `llama-3.1-8b-instant`, the CLI keeps
+that exact choice and fails early with a clear explanation if the request would
+be too large.
 
 Two ready-made presets ship with the repo — copy whichever you like over `squad.toml`:
 
@@ -353,7 +365,7 @@ roundtable-ai [--sample | --file FILE | --pr-url URL | --git-diff]
 | `--pr-url URL` | Review a live GitHub PR |
 | `--config PATH` | Use a non-default `squad.toml` |
 | `--provider NAME` | Force all three agents to one provider |
-| `--model NAME` | Force all three agents to one model; supports `default-fast` and `default-best` |
+| `--model NAME` | Force all three agents to one model; supports `default-fast` and `default-best` aliases |
 | `--cached` | Review staged changes via `git diff --cached` |
 | `--against REF` | Review your current branch/worktree against a base ref such as `main` |
 | `--check`, `--doctor` | Validate config and keys without calling an LLM |
@@ -414,6 +426,14 @@ Quick test without editing TOML:
 ```bash
 python pr_review_squad/cli.py --sample --provider groq --model default-fast
 ```
+
+If a diff is too large for the selected model, the CLI now tries to help before
+making the API call:
+
+- Alias-based Groq selections such as `default-fast` can auto-upgrade to a
+  larger built-in review model
+- Explicitly pinned models fail early with a clear explanation and suggested
+  next steps
 </details>
 
 <details>

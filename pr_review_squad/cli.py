@@ -33,11 +33,14 @@ from agents import AgentResult, LLMAgent, build_agent, synthesize_input
 from github_fetcher import GitHubFetchError, fetch_pr_diff
 from providers import (
     MissingKeyError,
+    ModelPlan,
     ModelValidationIssue,
     SquadConfigError,
     build_client,
     find_default_config,
+    get_model_request_limit,
     load_squad_config,
+    plan_model_for_request,
     resolve_config_models,
     validate_keys_for_config,
     validate_model_selection,
@@ -170,6 +173,53 @@ def evaluate_fail_on(
     else:
         should_fail = False
     return sec_passed, opt_passed, should_fail
+
+
+def estimate_request_tokens(system_prompt: str, user_input: str, response_budget: int = 512) -> int:
+    combined_chars = len(system_prompt) + len(user_input)
+    return max(1, ((combined_chars + 2) // 3) + response_budget)
+
+
+def render_model_plan_note(title: str, message: str) -> Panel:
+    return Panel(Text(message, style="yellow"), title=title, border_style="yellow")
+
+
+def render_request_too_large(
+    agent: LLMAgent,
+    requested_model: str,
+    plan: ModelPlan,
+) -> Panel:
+    configured_limit = get_model_request_limit(agent.provider, agent.model)
+    lines = [
+        Text.from_markup(
+            f"[bold red]{agent.name}[/bold red] would exceed the provider request limit before any LLM call is made."
+        ),
+        Text.from_markup(f"Estimated request size: [bold]{plan.estimated_tokens}[/bold] tokens"),
+        Text.from_markup(f"Configured model: [bold]{agent.provider}/{agent.model}[/bold]"),
+    ]
+    if configured_limit:
+        lines.append(Text.from_markup(f"Configured model limit: [bold]{configured_limit}[/bold] tokens"))
+    if requested_model != agent.model:
+        lines.append(Text.from_markup(f"Requested model setting: [bold]{requested_model}[/bold]"))
+    lines.append(Text.from_markup(f"\n{plan.message}"))
+    lines.append(
+        Text.from_markup(
+            "\nTry a smaller diff, split the PR, use `--cached` or a narrower `--against`, or choose a larger model/provider."
+        )
+    )
+    return Panel(Group(*lines), title="Request Too Large", border_style="red")
+
+
+def prepare_agent_for_input(agent: LLMAgent, requested_model: str, user_input: str) -> bool:
+    estimated_tokens = estimate_request_tokens(agent.system_prompt, user_input)
+    plan = plan_model_for_request(agent.provider, requested_model, agent.model, estimated_tokens)
+    if plan.selected_model is None:
+        console.print(render_request_too_large(agent, requested_model, plan))
+        return False
+    if plan.auto_selected and plan.selected_model != agent.model:
+        console.print(render_model_plan_note("Smart Model Selection", plan.message))
+        agent.model = plan.selected_model
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +595,18 @@ def run(args: argparse.Namespace) -> int:
 
     # --- Run the agents ---
     stream_mode = (not args.no_stream) and console.is_terminal
+    if not prepare_agent_for_input(
+        security,
+        config["security_auditor"].get("requested_model", security.model),
+        diff,
+    ):
+        return 3
+    if not prepare_agent_for_input(
+        optimizer,
+        config["optimization_expert"].get("requested_model", optimizer.model),
+        diff,
+    ):
+        return 3
     try:
         sec = run_agent(
             security,
@@ -564,9 +626,17 @@ def run(args: argparse.Namespace) -> int:
             spinner_label=f"Optimization Expert profiling… ({optimizer.provider}/{optimizer.model})",
         )
 
+        synthesized_input = synthesize_input(sec.output, opt.output)
+        if not prepare_agent_for_input(
+            tech_lead,
+            config["tech_lead"].get("requested_model", tech_lead.model),
+            synthesized_input,
+        ):
+            return 3
+
         lead = run_agent(
             tech_lead,
-            synthesize_input(sec.output, opt.output),
+            synthesized_input,
             "🧑‍💼 Tech Lead",
             "green",
             stream=stream_mode,
