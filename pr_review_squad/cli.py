@@ -14,8 +14,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
+import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from rich.console import Console, Group
@@ -31,11 +33,14 @@ from agents import AgentResult, LLMAgent, build_agent, synthesize_input
 from github_fetcher import GitHubFetchError, fetch_pr_diff
 from providers import (
     MissingKeyError,
+    ModelValidationIssue,
     SquadConfigError,
     build_client,
     find_default_config,
     load_squad_config,
+    resolve_config_models,
     validate_keys_for_config,
+    validate_model_selection,
 )
 
 
@@ -172,6 +177,65 @@ def evaluate_fail_on(
 # ---------------------------------------------------------------------------
 
 
+def uses_local_git_diff(args: argparse.Namespace) -> bool:
+    return bool(args.git_diff or args.cached or args.against)
+
+
+def find_git_root(start: Path) -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=start,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        msg = result.stderr.strip() or "Not inside a git repository."
+        console.print(Panel(Text(msg, style="red"), border_style="red"))
+        sys.exit(1)
+    return Path(result.stdout.strip())
+
+
+def run_git_command(args: list[str], cwd: Path) -> str:
+    result = subprocess.run(
+        args,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        msg = result.stderr.strip() or result.stdout.strip() or "git command failed"
+        console.print(Panel(Text(msg, style="red"), border_style="red"))
+        sys.exit(1)
+    return result.stdout
+
+
+def load_local_git_diff(args: argparse.Namespace) -> tuple[str, str]:
+    git_root = find_git_root(Path.cwd())
+
+    if args.against:
+        merge_base = run_git_command(["git", "merge-base", args.against, "HEAD"], git_root).strip()
+        diff = run_git_command(["git", "diff", merge_base], git_root)
+        source_label = f"git diff against {args.against}"
+    else:
+        diff_args = ["git", "diff"]
+        if args.cached:
+            diff_args.append("--cached")
+        diff = run_git_command(diff_args, git_root)
+        source_label = "git diff --cached" if args.cached else "git diff"
+
+    if not diff.strip():
+        message = f"No diff found for {source_label}."
+        console.print(Panel(Text(message, style="yellow"), border_style="yellow"))
+        sys.exit(1)
+    return diff, source_label
+
+
 def load_diff(args: argparse.Namespace) -> tuple[str, str]:
     if args.sample:
         if not SAMPLE_PATH.exists():
@@ -185,6 +249,9 @@ def load_diff(args: argparse.Namespace) -> tuple[str, str]:
             console.print(f"[red]File not found: {path}[/red]")
             sys.exit(1)
         return path.read_text(encoding="utf-8"), str(path)
+
+    if uses_local_git_diff(args):
+        return load_local_git_diff(args)
 
     if args.pr_url:
         with console.status(
@@ -284,6 +351,111 @@ def render_missing_keys(missing) -> Panel:
     return Panel(Group(*lines), border_style="red")
 
 
+def render_model_issues(issues: list[ModelValidationIssue], *, title: str) -> Panel:
+    lines: list[Text] = []
+    for issue in issues:
+        marker = "!" if issue.level == "warning" else "x"
+        style = "yellow" if issue.level == "warning" else "red"
+        lines.append(
+            Text.from_markup(
+                f"[{style}]{marker}[/{style}] [bold]{issue.agent}[/bold] "
+                f"({issue.provider}/{issue.model}) — {issue.message}"
+            )
+        )
+    border_style = "yellow" if all(issue.level == "warning" for issue in issues) else "red"
+    return Panel(Group(*lines), title=title, border_style=border_style)
+
+
+def render_check_panel(
+    config_path: Optional[Path],
+    config: dict[str, dict[str, str]],
+    missing_keys,
+    model_issues: list[ModelValidationIssue],
+) -> Panel:
+    env_path = HERE / ".env"
+    lines: list[Text] = [
+        Text.from_markup(
+            f"[bold]Config:[/bold] {config_path.name if config_path else 'built-in default'}"
+        ),
+        Text.from_markup(
+            f"[bold].env:[/bold] {'found' if env_path.exists() else 'missing'}"
+        ),
+        Text(""),
+        Text.from_markup("[bold]Resolved squad:[/bold]"),
+    ]
+
+    for agent, cfg in config.items():
+        lines.append(
+            Text.from_markup(
+                f"  • [bold]{agent}[/bold] → {cfg['provider']} / {cfg['model']}"
+            )
+        )
+
+    lines.append(Text(""))
+    if missing_keys:
+        lines.append(Text.from_markup("[bold red]Missing required provider keys:[/bold red]"))
+        for spec in missing_keys:
+            lines.append(
+                Text.from_markup(
+                    f"  • [bold]{spec.api_key_env}[/bold] — get one at [link]{spec.signup_url}[/link]"
+                )
+            )
+    else:
+        lines.append(Text.from_markup("[green]All required provider keys are present.[/green]"))
+
+    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if github_token:
+        lines.append(
+            Text.from_markup(
+                "[green]GITHUB_TOKEN is present.[/green] Useful for private PRs and higher GitHub API limits."
+            )
+        )
+    else:
+        lines.append(
+            Text.from_markup(
+                "[yellow]GITHUB_TOKEN is missing.[/yellow] Optional for public PRs; recommended for private PRs and rate limits."
+            )
+        )
+
+    if model_issues:
+        lines.append(Text(""))
+        lines.append(Text.from_markup("[bold]Model validation:[/bold]"))
+        for issue in model_issues:
+            color = "yellow" if issue.level == "warning" else "red"
+            lines.append(Text.from_markup(f"  [{color}]•[/{color}] {issue.message}"))
+    else:
+        lines.append(Text.from_markup("[green]All configured models match the built-in provider catalog.[/green]"))
+
+    return Panel(Group(*lines), title="Configuration Check", border_style="cyan")
+
+
+def run_check(
+    config_path: Optional[Path],
+    config: dict[str, dict[str, str]],
+) -> int:
+    missing = validate_keys_for_config(config)
+    model_issues = validate_model_selection(config)
+    banner()
+    console.print(round_table_panel(config))
+    console.print(render_check_panel(config_path, config, missing, model_issues))
+
+    model_errors = [issue for issue in model_issues if issue.level == "error"]
+    if missing or model_errors:
+        return 2
+    return 0
+
+
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.cached and args.against:
+        parser.error("--cached and --against cannot be combined.")
+
+    if (args.cached or args.against) and (args.sample or args.file or args.pr_url):
+        parser.error("--cached and --against only apply to local git diff mode.")
+
+    if args.check and (args.sample or args.file or args.pr_url or args.git_diff or args.cached or args.against):
+        parser.error("--check validates configuration only; do not combine it with a diff source.")
+
+
 # ---------------------------------------------------------------------------
 # Main entry
 # ---------------------------------------------------------------------------
@@ -308,6 +480,19 @@ def run(args: argparse.Namespace) -> int:
     if args.provider:
         for agent_key in config:
             config[agent_key]["provider"] = args.provider
+
+    config = resolve_config_models(config)
+
+    model_issues = validate_model_selection(config)
+    model_errors = [issue for issue in model_issues if issue.level == "error"]
+    if model_errors:
+        banner()
+        console.print(round_table_panel(config))
+        console.print(render_model_issues(model_errors, title="Model Validation Errors"))
+        return 4
+
+    if args.check:
+        return run_check(config_path, config)
 
     # --- Validate keys ---
     missing = validate_keys_for_config(config)
@@ -394,6 +579,11 @@ def run(args: argparse.Namespace) -> int:
             hint = "\n\n[dim]Tip: the model name might be wrong for that provider. Check the provider's docs.[/dim]"
         elif "401" in msg or "unauthorized" in msg.lower():
             hint = "\n\n[dim]Tip: your API key was rejected. Re-check the value in .env.[/dim]"
+        elif "413" in msg or "request too large" in msg.lower() or "tokens per minute" in msg.lower():
+            hint = (
+                "\n\n[dim]Tip: this diff is too large for the current model. Try a larger model "
+                "such as `--model default-best`, review a smaller slice with `--cached`, or use a narrower base ref with `--against`.[/dim]"
+            )
         console.print(Panel(Text.from_markup(f"[red]LLM call failed:[/red] {msg}{hint}"), border_style="red"))
         return 3
 
@@ -473,9 +663,19 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--pr-url", help="GitHub PR URL, e.g. https://github.com/psf/requests/pull/6800")
     src.add_argument("--file", help="Path to a .diff or .txt file containing a unified diff")
     src.add_argument("--sample", action="store_true", help="Use the bundled vulnerable sample diff")
+    src.add_argument(
+        "--git-diff",
+        "--working-tree",
+        dest="git_diff",
+        action="store_true",
+        help="Review local working-tree changes via git diff",
+    )
     p.add_argument("--config", help="Path to a squad.toml (defaults to ./squad.toml)")
     p.add_argument("--provider", help="Force all three agents to use this provider (overrides squad.toml)")
-    p.add_argument("--model", help="Force all three agents to use this model (overrides squad.toml)")
+    p.add_argument("--model", help="Force all three agents to use this model (overrides squad.toml); supports default-fast and default-best")
+    p.add_argument("--cached", action="store_true", help="Review staged changes via git diff --cached")
+    p.add_argument("--against", metavar="REF", help="Review your current branch and working tree against a base ref, e.g. --against main")
+    p.add_argument("--check", "--doctor", dest="check", action="store_true", help="Validate .env, squad.toml, provider keys, and model selections without calling an LLM")
     p.add_argument("--no-save", action="store_true", help="Don't write the synthesised comment to reviews/")
     p.add_argument("--no-clipboard", action="store_true", help="Don't copy the synthesised comment to the clipboard")
     p.add_argument("--no-stream", action="store_true", help="Disable live token streaming (auto-disabled in non-TTY)")
@@ -489,7 +689,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    return run(build_parser().parse_args())
+    parser = build_parser()
+    args = parser.parse_args()
+    validate_args(parser, args)
+    return run(args)
 
 
 if __name__ == "__main__":
