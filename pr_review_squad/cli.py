@@ -177,14 +177,14 @@ def load_diff(args: argparse.Namespace) -> tuple[str, str]:
         if not SAMPLE_PATH.exists():
             console.print(f"[red]Sample diff not found at {SAMPLE_PATH}[/red]")
             sys.exit(1)
-        return SAMPLE_PATH.read_text(), f"sample ({SAMPLE_PATH.name})"
+        return SAMPLE_PATH.read_text(encoding="utf-8"), f"sample ({SAMPLE_PATH.name})"
 
     if args.file:
         path = Path(args.file).expanduser().resolve()
         if not path.exists():
             console.print(f"[red]File not found: {path}[/red]")
             sys.exit(1)
-        return path.read_text(), str(path)
+        return path.read_text(encoding="utf-8"), str(path)
 
     if args.pr_url:
         with console.status(
@@ -253,7 +253,16 @@ def save_review(
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     path = REVIEWS_DIR / f"review_{ts}.md"
-    path.write_text(build_markdown_body(final_markdown, source_label, security_report, optimization_report, squad_summary))
+    path.write_text(
+        build_markdown_body(
+            final_markdown,
+            source_label,
+            security_report,
+            optimization_report,
+            squad_summary,
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -414,7 +423,7 @@ def run(args: argparse.Namespace) -> int:
         out_path = Path(args.output).expanduser().resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         body = build_markdown_body(lead.output, source_label, sec.output, opt.output, squad_summary)
-        out_path.write_text(body)
+        out_path.write_text(body, encoding="utf-8")
         footer_lines.append(Text.from_markup(f"📤 Wrote PR comment to [bold]{out_path}[/bold]"))
 
     if args.no_clipboard:
