@@ -19,6 +19,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from rich.console import Console, Group
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
@@ -26,7 +27,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from agents import build_agent, synthesize_input
+from agents import AgentResult, LLMAgent, build_agent, synthesize_input
 from github_fetcher import GitHubFetchError, fetch_pr_diff
 from providers import (
     MissingKeyError,
@@ -109,6 +110,63 @@ def agent_panel(title: str, body: str, color: str, footnote: str = "") -> Panel:
     )
 
 
+def run_agent(
+    agent: LLMAgent,
+    user_input: str,
+    title: str,
+    color: str,
+    *,
+    stream: bool,
+    spinner_label: str,
+) -> AgentResult:
+    """Run one agent, either streaming tokens live or with a spinner."""
+    if not stream:
+        with console.status(f"[bold {color}]{spinner_label}[/bold {color}]", spinner="dots"):
+            result = agent.run(user_input)
+        console.print(agent_panel(title, result.output, color, footnote=f"via {result.provider} · {result.model}"))
+        return result
+
+    # Streaming: stream raw tokens into a transient Live panel, then re-print
+    # the final response as fully-rendered Markdown.
+    streamed = Text()
+    live_panel = Panel(
+        streamed,
+        title=f"[bold {color}]{title}[/bold {color}] [dim](streaming…)[/dim]",
+        border_style=color,
+        padding=(1, 2),
+    )
+    with Live(live_panel, console=console, refresh_per_second=20, transient=True):
+        for delta in agent.stream(user_input):
+            streamed.append(delta)
+    final_text = str(streamed)
+    result = AgentResult(agent.name, final_text, agent.provider, agent.model)
+    console.print(agent_panel(title, result.output, color, footnote=f"via {result.provider} · {result.model}"))
+    return result
+
+
+SECURITY_PASS_TOKEN = "SECURITY CHECK: PASS"
+OPTIMIZATION_PASS_TOKEN = "OPTIMIZATION CHECK: PASS"
+
+
+def evaluate_fail_on(
+    fail_on: str | None,
+    security_output: str,
+    optimization_output: str,
+) -> tuple[bool, bool, bool]:
+    """Returns (security_passed, optimization_passed, should_fail_exit)."""
+    sec_passed = SECURITY_PASS_TOKEN in security_output
+    opt_passed = OPTIMIZATION_PASS_TOKEN in optimization_output
+    if fail_on == "security":
+        should_fail = not sec_passed
+    elif fail_on == "optimization":
+        should_fail = not opt_passed
+    elif fail_on == "any":
+        should_fail = not (sec_passed and opt_passed)
+    else:
+        should_fail = False
+    return sec_passed, opt_passed, should_fail
+
+
 # ---------------------------------------------------------------------------
 # Diff loading
 # ---------------------------------------------------------------------------
@@ -160,16 +218,14 @@ def copy_to_clipboard(text: str) -> bool:
         return False
 
 
-def save_review(
+def build_markdown_body(
     final_markdown: str,
     source_label: str,
     security_report: str,
     optimization_report: str,
     squad_summary: str,
-) -> Path:
-    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = REVIEWS_DIR / f"review_{ts}.md"
+) -> str:
+    """Format the final PR-comment markdown (used by both --save and --output)."""
     header = (
         f"<!-- RoundTable AI · {dt.datetime.now().isoformat(timespec='seconds')} -->\n"
         f"<!-- Source: {source_label} -->\n"
@@ -184,7 +240,20 @@ def save_review(
         f"{optimization_report or '_(empty)_'}\n\n"
         "</details>\n"
     )
-    path.write_text(header + final_markdown + raw_block + "\n")
+    return header + final_markdown + raw_block + "\n"
+
+
+def save_review(
+    final_markdown: str,
+    source_label: str,
+    security_report: str,
+    optimization_report: str,
+    squad_summary: str,
+) -> Path:
+    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = REVIEWS_DIR / f"review_{ts}.md"
+    path.write_text(build_markdown_body(final_markdown, source_label, security_report, optimization_report, squad_summary))
     return path
 
 
@@ -281,32 +350,34 @@ def run(args: argparse.Namespace) -> int:
     )
 
     # --- Run the agents ---
+    stream_mode = (not args.no_stream) and console.is_terminal
     try:
-        with console.status(
-            f"[bold red]Security Auditor scanning… ({security.provider}/{security.model})[/bold red]",
-            spinner="dots",
-        ):
-            sec = security.run(diff)
-        console.print(agent_panel(
-            "🔐 Security Auditor", sec.output, "red",
-            footnote=f"via {sec.provider} · {sec.model}",
-        ))
+        sec = run_agent(
+            security,
+            diff,
+            "🔐 Security Auditor",
+            "red",
+            stream=stream_mode,
+            spinner_label=f"Security Auditor scanning… ({security.provider}/{security.model})",
+        )
 
-        with console.status(
-            f"[bold yellow]Optimization Expert profiling… ({optimizer.provider}/{optimizer.model})[/bold yellow]",
-            spinner="dots",
-        ):
-            opt = optimizer.run(diff)
-        console.print(agent_panel(
-            "⚡ Optimization Expert", opt.output, "yellow",
-            footnote=f"via {opt.provider} · {opt.model}",
-        ))
+        opt = run_agent(
+            optimizer,
+            diff,
+            "⚡ Optimization Expert",
+            "yellow",
+            stream=stream_mode,
+            spinner_label=f"Optimization Expert profiling… ({optimizer.provider}/{optimizer.model})",
+        )
 
-        with console.status(
-            f"[bold green]Tech Lead synthesizing… ({tech_lead.provider}/{tech_lead.model})[/bold green]",
-            spinner="dots",
-        ):
-            lead = tech_lead.run(synthesize_input(sec.output, opt.output))
+        lead = run_agent(
+            tech_lead,
+            synthesize_input(sec.output, opt.output),
+            "🧑‍💼 Tech Lead",
+            "green",
+            stream=stream_mode,
+            spinner_label=f"Tech Lead synthesizing… ({tech_lead.provider}/{tech_lead.model})",
+        )
     except Exception as exc:  # noqa: BLE001 - surface SDK errors as friendly text
         msg = str(exc)
         hint = ""
@@ -339,6 +410,13 @@ def run(args: argparse.Namespace) -> int:
         saved_path = save_review(lead.output, source_label, sec.output, opt.output, squad_summary)
         footer_lines.append(Text.from_markup(f"📝 Saved to [bold]{saved_path}[/bold]"))
 
+    if args.output:
+        out_path = Path(args.output).expanduser().resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        body = build_markdown_body(lead.output, source_label, sec.output, opt.output, squad_summary)
+        out_path.write_text(body)
+        footer_lines.append(Text.from_markup(f"📤 Wrote PR comment to [bold]{out_path}[/bold]"))
+
     if args.no_clipboard:
         footer_lines.append(Text.from_markup("📋 [dim]--no-clipboard: skipped clipboard copy[/dim]"))
     else:
@@ -352,7 +430,29 @@ def run(args: argparse.Namespace) -> int:
         )
 
     console.print(Panel(Group(*footer_lines), border_style="grey30"))
-    return 0
+
+    # --- Final verdict / --fail-on gate ---
+    sec_passed, opt_passed, should_fail = evaluate_fail_on(args.fail_on, sec.output, opt.output)
+    verdict_lines = [
+        Text.from_markup(
+            f"{'[green]✓[/green]' if sec_passed else '[red]✗[/red]'} Security check "
+            f"{'[green]passed[/green]' if sec_passed else '[red]found issues[/red]'}"
+        ),
+        Text.from_markup(
+            f"{'[green]✓[/green]' if opt_passed else '[yellow]✗[/yellow]'} Optimization check "
+            f"{'[green]passed[/green]' if opt_passed else '[yellow]found suggestions[/yellow]'}"
+        ),
+    ]
+    if args.fail_on:
+        verdict_lines.append(
+            Text.from_markup(
+                f"\n[dim]--fail-on={args.fail_on}:[/dim] "
+                + ("[red]exiting non-zero[/red]" if should_fail else "[green]gate satisfied[/green]")
+            )
+        )
+    console.print(Panel(Group(*verdict_lines), title="Verdict", border_style="cyan" if not should_fail else "red"))
+
+    return 1 if should_fail else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -369,6 +469,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", help="Force all three agents to use this model (overrides squad.toml)")
     p.add_argument("--no-save", action="store_true", help="Don't write the synthesised comment to reviews/")
     p.add_argument("--no-clipboard", action="store_true", help="Don't copy the synthesised comment to the clipboard")
+    p.add_argument("--no-stream", action="store_true", help="Disable live token streaming (auto-disabled in non-TTY)")
+    p.add_argument("--output", metavar="PATH", help="Also write the synthesised PR comment to this path (used by the GitHub Action)")
+    p.add_argument(
+        "--fail-on",
+        choices=("security", "optimization", "any"),
+        help="Exit non-zero if the chosen check fails (CI gate mode)",
+    )
     return p
 
 

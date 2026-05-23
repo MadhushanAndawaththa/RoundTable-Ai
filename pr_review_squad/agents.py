@@ -97,6 +97,24 @@ class LLMAgent:
         text = (response.choices[0].message.content or "").strip()
         return AgentResult(self.name, text, self.provider, self.model)
 
+    def stream(self, user_input: str):
+        """Yield content deltas as they arrive from the provider."""
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_input},
+            ],
+            temperature=self.temperature,
+            stream=True,
+        )
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
 
 def build_agent(
     agent_key: str,

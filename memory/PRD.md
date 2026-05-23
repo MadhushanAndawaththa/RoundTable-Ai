@@ -40,6 +40,18 @@ pr_review_squad/
 - ✅ Clear, friendly error when `GEMINI_API_KEY` is missing (with link to free-tier key)
 - ✅ End-to-end smoke test passing (rendering, save, clipboard fallback verified)
 
+## Iteration 4 (2026-05-23) — Path A: GitHub Action + streaming + CI gate 🚀
+- ✅ **Streaming** agent output: tokens stream into a transient `rich.Live` panel during generation, then get replaced by a fully-rendered Markdown panel
+- ✅ Auto-disables streaming in non-TTY environments (CI, piped output)
+- ✅ **`--fail-on {security,optimization,any}`** CI-gate mode — exits non-zero when the chosen check fails
+- ✅ **Verdict panel** at the end of every run with ✓/✗ for each check
+- ✅ **`--output PATH`** flag — writes the synthesised PR comment (with raw-report details) to an explicit path for the GitHub Action to consume
+- ✅ **`.github/workflows/roundtable.yml`** — runs on every PR (incl. fork PRs via `pull_request_target`), posts the synthesised comment, and writes the full review to the Action's job summary
+- ✅ Concurrency group cancels in-flight runs when a PR is force-pushed
+- ✅ Refactored `save_review` to share its body-builder with `--output` (no duplication)
+- ✅ README adds a full "Running on your own PRs" section with secret setup, merge-gate config, and local-CI usage
+- ✅ All flows (streaming, no-stream, fail-on issues, fail-on pass, explicit --output) smoke-tested
+
 ## Iteration 3 (2026-05-22) — Multi-provider mode 🎉
 - ✅ Replaced `google-genai` with `openai` SDK as the **single unified client** for all providers
 - ✅ New `providers.py` with a 6-provider catalog (gemini, grok, openrouter, openai, deepseek, groq) — each one a 5-line `ProviderSpec`, trivial to extend

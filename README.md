@@ -213,6 +213,9 @@ pr-review-squad [--sample | --file FILE | --pr-url URL]
 | `--config PATH` | Use a non-default `squad.toml` (defaults to `pr_review_squad/squad.toml`) |
 | `--provider NAME` | Force **all three** agents to one provider (`gemini` / `grok` / `openrouter` / `openai` / `deepseek` / `groq`) |
 | `--model NAME` | Force **all three** agents to one model |
+| `--no-stream` | Disable live token streaming (auto-disabled outside a TTY) |
+| `--output PATH` | Also write the synthesised PR comment to an explicit path (used by the GitHub Action) |
+| `--fail-on {security\|optimization\|any}` | **CI gate mode** — exit non-zero when the chosen check fails |
 | `--no-save` | Skip writing the markdown file (useful in CI) |
 | `--no-clipboard` | Skip copying to clipboard (useful in CI / headless) |
 | `-h, --help` | Show the built-in help |
@@ -281,6 +284,60 @@ source: sample (sample_diff.txt)    model: gemini-2.0-flash
 ```
 
 The saved `.md` file is **GitHub-ready** — paste it straight into a PR comment.
+
+---
+
+## 🤖 Running on your own PRs (GitHub Action)
+
+The repo ships a ready-to-use workflow at
+[`.github/workflows/roundtable.yml`](.github/workflows/roundtable.yml). When
+installed on a repo, **every pull request gets a round-table review posted as a
+comment** within ~30 seconds of being opened.
+
+### Setup (one-time, 60 seconds)
+
+1. Push this repo (or fork it) to GitHub.
+2. Go to **Settings → Secrets and variables → Actions → New repository secret**
+   and add the keys you use in `squad.toml`. At minimum:
+
+   | Secret name | When you need it |
+   |---|---|
+   | `GEMINI_API_KEY` | If any agent uses `gemini` |
+   | `OPENROUTER_API_KEY` | If any agent uses `openrouter` |
+   | `XAI_API_KEY` | If any agent uses `grok` |
+   | `GROQ_API_KEY` | If any agent uses `groq` |
+   | `DEEPSEEK_API_KEY` | If any agent uses `deepseek` |
+   | `OPENAI_API_KEY` | If any agent uses `openai` |
+
+3. That's it. Open a pull request — the comment lands in the PR within a
+   minute and the full markdown is also added to the Action's job summary.
+
+### Make it a merge gate
+
+By default the action is **informative only** — it posts the comment but won't
+block a merge. To turn it into a hard gate, append `--fail-on any` (or
+`security` / `optimization`) to the `Run the round table` step:
+
+```yaml
+- run: |
+    python pr_review_squad/cli.py \
+      --pr-url "${{ github.event.pull_request.html_url }}" \
+      --no-clipboard --no-save --no-stream \
+      --output "${{ runner.temp }}/review.md" \
+      --fail-on any
+```
+
+Then require this check in **Settings → Branches → Branch protection rules**
+and merges are blocked until the squad gives both ✓.
+
+### Local CI gate (no Action needed)
+
+You can also run the gate in a pre-push hook or any CI system:
+
+```bash
+# Exits 1 if security issues are found, 0 otherwise
+python pr_review_squad/cli.py --file my.diff --fail-on security --no-clipboard
+```
 
 ---
 
@@ -365,6 +422,7 @@ or the PR is in a private repo. For private repos add a `GITHUB_TOKEN` with the 
 
 ```
 RoundTable-Ai/
+├── .github/workflows/roundtable.yml      # auto-reviews every PR on this repo
 ├── Makefile                              # one-command shortcuts
 ├── README.md                             # ← you're reading it
 ├── .python-version                       # pyenv hint (3.11)
@@ -385,12 +443,14 @@ RoundTable-Ai/
 
 ## 🧭 Roadmap
 
-- [ ] **Streaming output** — agent responses stream token-by-token to the terminal
 - [ ] **`pip install .` entry-point** so `roundtable-ai` is a real binary on `$PATH`
-- [ ] **GitHub Actions workflow** that runs RoundTable AI on every PR opened against this repo
-- [ ] **Token / cost summary** displayed at the end of each run (now that we have multiple providers, this is extra interesting)
-- [ ] **`gh` CLI integration** to auto-post the synthesised comment to the PR
-- [x] ~~**Pluggable provider abstraction** (Grok / OpenAI / Anthropic) — done in v2~~
+- [ ] **Token / cost summary** per agent at end of run (extra interesting with multi-provider)
+- [ ] **`gh` CLI integration** to auto-post comments from the local CLI too
+- [ ] **Web UI** (optional layer: same backend, paste-diff/PR-URL form, hosted demo)
+- [x] ~~**Pluggable provider abstraction** — done in v2~~
+- [x] ~~**Streaming agent output** — done in v3~~
+- [x] ~~**GitHub Action** that auto-reviews PRs on this repo — done in v3~~
+- [x] ~~**CI gate mode** (`--fail-on`) — done in v3~~
 
 ---
 

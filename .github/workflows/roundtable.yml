@@ -1,0 +1,74 @@
+name: RoundTable AI · PR Review
+
+# Runs the 3-agent squad on every PR opened against this repo and posts the
+# synthesised comment back. Uses `pull_request_target` so the action has access
+# to repo secrets even for PRs from forks (we never execute PR code — we only
+# fetch the unified diff via GitHub's API and feed it to LLMs, so this is safe).
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+# A second push to the same PR cancels the in-flight run.
+concurrency:
+  group: roundtable-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write     # post a comment on the PR
+  contents: read           # checkout this repo's code (the squad itself)
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RoundTable AI
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pr_review_squad/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pr_review_squad/requirements.txt
+
+      - name: Run the round table
+        env:
+          # Only the providers you actually use in squad.toml need a key.
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY:   ${{ secrets.DEEPSEEK_API_KEY }}
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          # GITHUB_TOKEN is auto-provided by Actions; gives the squad a higher
+          # rate limit when pulling the diff from the GitHub API.
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python pr_review_squad/cli.py \
+            --pr-url "${{ github.event.pull_request.html_url }}" \
+            --no-clipboard \
+            --no-save \
+            --no-stream \
+            --output "${{ runner.temp }}/review.md"
+
+      - name: Add review to job summary
+        if: always()
+        run: |
+          {
+            echo "## 🪑 RoundTable AI review"
+            echo
+            cat "${{ runner.temp }}/review.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post review as PR comment
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --body-file "${{ runner.temp }}/review.md"
