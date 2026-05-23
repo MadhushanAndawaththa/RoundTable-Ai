@@ -14,7 +14,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 try:
     import tomllib  # Python 3.11+
@@ -36,6 +36,25 @@ class ProviderSpec:
     api_key_env: str
     signup_url: str
     notes: str = ""
+    default_fast_model: str = ""
+    default_best_model: str = ""
+    known_models: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ModelValidationIssue:
+    level: str
+    agent: str
+    provider: str
+    model: str
+    message: str
+
+
+MODEL_ALIASES = {
+    "default": "default_fast_model",
+    "default-fast": "default_fast_model",
+    "default-best": "default_best_model",
+}
 
 
 KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
@@ -45,6 +64,9 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="GEMINI_API_KEY",
         signup_url="https://aistudio.google.com/apikey",
         notes="Free tier on gemini-2.0-flash",
+        default_fast_model="gemini-2.0-flash",
+        default_best_model="gemini-2.5-flash",
+        known_models=("gemini-2.0-flash", "gemini-2.5-flash"),
     ),
     "grok": ProviderSpec(
         name="grok",
@@ -52,6 +74,9 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="XAI_API_KEY",
         signup_url="https://console.x.ai/",
         notes="xAI Grok models (grok-2, grok-2-latest, grok-3)",
+        default_fast_model="grok-2-latest",
+        default_best_model="grok-3",
+        known_models=("grok-2", "grok-2-latest", "grok-3"),
     ),
     "openrouter": ProviderSpec(
         name="openrouter",
@@ -59,6 +84,12 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="OPENROUTER_API_KEY",
         signup_url="https://openrouter.ai/keys",
         notes="Aggregator: Claude, GPT, Llama, Mistral, free-tier models, …",
+        default_fast_model="anthropic/claude-3.5-haiku",
+        default_best_model="meta-llama/llama-3.3-70b-instruct",
+        known_models=(
+            "anthropic/claude-3.5-haiku",
+            "meta-llama/llama-3.3-70b-instruct",
+        ),
     ),
     "openai": ProviderSpec(
         name="openai",
@@ -66,6 +97,9 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="OPENAI_API_KEY",
         signup_url="https://platform.openai.com/api-keys",
         notes="GPT-4o, GPT-4o-mini, o1, …",
+        default_fast_model="gpt-4o-mini",
+        default_best_model="gpt-4o",
+        known_models=("gpt-4o-mini", "gpt-4o"),
     ),
     "deepseek": ProviderSpec(
         name="deepseek",
@@ -73,6 +107,9 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="DEEPSEEK_API_KEY",
         signup_url="https://platform.deepseek.com/api_keys",
         notes="deepseek-chat, deepseek-reasoner",
+        default_fast_model="deepseek-chat",
+        default_best_model="deepseek-reasoner",
+        known_models=("deepseek-chat", "deepseek-reasoner"),
     ),
     "groq": ProviderSpec(
         name="groq",
@@ -80,6 +117,22 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="GROQ_API_KEY",
         signup_url="https://console.groq.com/keys",
         notes="Ultra-fast inference (llama, mixtral, …)",
+        default_fast_model="llama-3.1-8b-instant",
+        default_best_model="llama-3.3-70b-versatile",
+        known_models=(
+            "allam-2-7b",
+            "groq/compound",
+            "groq/compound-mini",
+            "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "meta-llama/llama-prompt-guard-2-22m",
+            "meta-llama/llama-prompt-guard-2-86m",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "openai/gpt-oss-safeguard-20b",
+            "qwen/qwen3-32b",
+        ),
     ),
 }
 
@@ -87,11 +140,11 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
 AGENT_KEYS = ("security_auditor", "optimization_expert", "tech_lead")
 
 
-# Default: every agent uses Gemini. Works with just GEMINI_API_KEY in .env.
+# Default: Groq-only profile. Works with just GROQ_API_KEY in .env.
 DEFAULT_CONFIG: dict[str, dict[str, str]] = {
-    "security_auditor": {"provider": "gemini", "model": "gemini-2.0-flash"},
-    "optimization_expert": {"provider": "gemini", "model": "gemini-2.0-flash"},
-    "tech_lead": {"provider": "gemini", "model": "gemini-2.0-flash"},
+    "security_auditor": {"provider": "groq", "model": "default-fast"},
+    "optimization_expert": {"provider": "groq", "model": "default-fast"},
+    "tech_lead": {"provider": "groq", "model": "default-best"},
 }
 
 
@@ -146,6 +199,73 @@ def load_squad_config(path: Optional[Path]) -> dict[str, dict[str, str]]:
     return {agent: dict(data[agent]) for agent in AGENT_KEYS}
 
 
+def resolve_model_alias(provider_name: str, model_name: str) -> str:
+    alias_key = model_name.strip()
+    alias_attr = MODEL_ALIASES.get(alias_key)
+    if not alias_attr:
+        return alias_key
+    spec = KNOWN_PROVIDERS[provider_name]
+    resolved = getattr(spec, alias_attr)
+    return resolved or alias_key
+
+
+def resolve_config_models(config: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    resolved: dict[str, dict[str, str]] = {}
+    for agent, cfg in config.items():
+        provider_name = cfg["provider"]
+        resolved[agent] = {
+            "provider": provider_name,
+            "model": resolve_model_alias(provider_name, cfg["model"]),
+        }
+    return resolved
+
+
+def validate_model_selection(
+    config: dict[str, dict[str, str]],
+) -> list[ModelValidationIssue]:
+    issues: list[ModelValidationIssue] = []
+    for agent, cfg in config.items():
+        provider_name = cfg["provider"]
+        model_name = cfg["model"]
+        spec = KNOWN_PROVIDERS[provider_name]
+        if model_name in spec.known_models:
+            continue
+
+        other_matches = [
+            other.name
+            for other in KNOWN_PROVIDERS.values()
+            if other.name != provider_name and model_name in other.known_models
+        ]
+        if other_matches:
+            issues.append(
+                ModelValidationIssue(
+                    level="error",
+                    agent=agent,
+                    provider=provider_name,
+                    model=model_name,
+                    message=(
+                        f"{model_name!r} is not a known-good model for provider "
+                        f"{provider_name!r}; it matches {', '.join(other_matches)}."
+                    ),
+                )
+            )
+            continue
+
+        issues.append(
+            ModelValidationIssue(
+                level="warning",
+                agent=agent,
+                provider=provider_name,
+                model=model_name,
+                message=(
+                    f"{model_name!r} is not in the built-in known-good list for "
+                    f"provider {provider_name!r}. Custom model IDs may still work."
+                ),
+            )
+        )
+    return issues
+
+
 def build_client(provider_name: str) -> OpenAI:
     """Return an OpenAI client wired up for the given provider."""
     spec = KNOWN_PROVIDERS[provider_name]
@@ -153,7 +273,7 @@ def build_client(provider_name: str) -> OpenAI:
     if not key or key.startswith("your_"):
         raise MissingKeyError(spec)
 
-    kwargs = {"api_key": key, "base_url": spec.base_url}
+    kwargs: dict[str, Any] = {"api_key": key, "base_url": spec.base_url}
 
     # OpenRouter recommends an identifying header so your traffic is attributed.
     if provider_name == "openrouter":
