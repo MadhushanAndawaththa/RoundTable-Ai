@@ -1,7 +1,28 @@
-# RoundTable AI
+<h1 align="center">🪑 RoundTable AI</h1>
 
-> Three specialised AI agents review your Git diff at a virtual round table,
-> then your Tech Lead writes the Pull-Request comment for you.
+<p align="center">
+  <em>Three specialised LLM agents sit at a round table and review your pull requests.</em><br/>
+  <em>One reads it for security, one for performance, the third writes the comment.</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/MadhushanAndawaththa/RoundTable-Ai/actions/workflows/roundtable.yml"><img src="https://img.shields.io/github/actions/workflow/status/MadhushanAndawaththa/RoundTable-Ai/roundtable.yml?branch=main&label=PR%20review&logo=githubactions&logoColor=white" alt="GitHub Action status"/></a>
+  <a href="#-license"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"/></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg?logo=python&logoColor=white" alt="Python 3.11+"/>
+  <img src="https://img.shields.io/badge/providers-Gemini%20·%20Grok%20·%20OpenRouter%20·%20OpenAI%20·%20DeepSeek%20·%20Groq-7c3aed" alt="Supported providers"/>
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome"/>
+</p>
+
+<p align="center">
+  <a href="#-quick-start-60-seconds"><b>Quick start</b></a> ·
+  <a href="#-the-six-supported-providers"><b>Providers</b></a> ·
+  <a href="#-mixing-providers-per-agent"><b>Multi-provider</b></a> ·
+  <a href="#-github-action-auto-review-every-pr"><b>GitHub Action</b></a> ·
+  <a href="#-cli-reference"><b>CLI</b></a> ·
+  <a href="#-troubleshooting"><b>Troubleshooting</b></a>
+</p>
+
+---
 
 ```
             ┌────────────────────────┐
@@ -25,36 +46,48 @@
               (terminal + .md + 📋 clipboard)
 ```
 
-Powered by **any OpenAI-compatible LLM provider** — Google Gemini, xAI Grok,
-OpenRouter, OpenAI, DeepSeek, Groq, and more. **One agent, one provider, one
-model — your call.** No third-party multi-LLM library required; we just swap
-`base_url` per provider and call it a day. Pure-Python CLI — no DB, no server,
-no UI dependency.
+---
+
+## ✨ Features
+
+- **3-agent review pipeline** — Security · Optimization · Tech Lead synthesiser
+- **6 LLM providers supported** — Gemini, xAI Grok, OpenRouter, OpenAI, DeepSeek, Groq
+- **Per-agent provider mixing** — different model per role via one TOML file
+- **Live token streaming** in the terminal (auto-disables in CI)
+- **GitHub Action included** — opens every PR? gets a review comment in ~30 s
+- **CI-gate mode** (`--fail-on`) — block merges on security findings
+- **Three input modes** — bundled sample, local `.diff` file, live GitHub PR URL
+- **GitHub-ready output** — final markdown saved to disk + auto-copied to clipboard
+- **Single dependency for LLMs** — `openai` SDK + base-URL switching, no LiteLLM bloat
+
+## 📺 What a run looks like
+
+```
+🪑 The Round Table
+  🔐 Security Auditor      gemini       gemini-2.0-flash
+  ⚡ Optimization Expert   groq         llama-3.3-70b-versatile
+  🧑‍💼 Tech Lead             groq         llama-3.3-70b-versatile
+
+[ syntax-highlighted git diff appears here ]
+
+🔐 Security Auditor finds: SQL injection, MD5 hashing, hardcoded credential
+⚡ Optimization Expert finds: O(n²) lookup, redundant loops, naming smells
+🧑‍💼 Tech Lead writes a friendly, sectioned PR comment with both findings
+
+📝 Saved to pr_review_squad/reviews/review_20260523_142211.md
+📋 Copied to clipboard
+
+Verdict
+  ✓ Security check passed
+  ✓ Optimization check passed
+```
 
 ---
 
-## ✨ What it does
+## 🚀 Quick start (60 seconds)
 
-For any unified diff (a GitHub PR URL, a local `.diff` file, or the bundled
-sample) RoundTable AI:
-
-1. **Security Auditor** scans for vulnerabilities, unsafe data handling and leaked secrets
-2. **Optimization Expert** finds perf issues, dead code, DRY violations and naming smells
-3. **Tech Lead** merges the two reports into a single, empathetic, Markdown-formatted
-   PR comment ready to paste into GitHub
-
-You get:
-- 🎨 A dark-IDE-styled terminal walkthrough (syntax-highlighted diff + colour-coded agent panels)
-- 📝 The final PR comment saved to `pr_review_squad/reviews/review_<timestamp>.md`
-- 📋 The final PR comment automatically copied to your clipboard
-- 🔍 The raw Security & Optimization reports stashed at the bottom of the `.md` (collapsible `<details>` blocks) so you can audit what each agent actually said
-
----
-
-## 🚀 Quick start (under a minute)
-
-> **Prerequisites:** Python 3.10+ and `make` (already on macOS & Linux; on
-> Windows use `wsl` or run the raw python commands from the "Manual" section below).
+> **Prerequisites:** Python 3.11+ and `make` (macOS/Linux ship with `make`;
+> Windows users: use WSL or follow the [Manual setup](#manual-setup) section.)
 
 ```bash
 # 1. Clone
@@ -64,11 +97,10 @@ cd RoundTable-Ai
 # 2. Install Python deps
 make install
 
-# 3. Paste your free Gemini key (see next section for how to get one)
+# 3. Create your .env (then paste your Gemini key inside — see next section)
 cp pr_review_squad/.env.example pr_review_squad/.env
-$EDITOR pr_review_squad/.env        # or: nano / code / vim
 
-# 4. Run the demo
+# 4. Run the demo on a bundled vulnerable sample diff
 make demo
 ```
 
@@ -77,86 +109,91 @@ PR comment will land in `pr_review_squad/reviews/`.
 
 ---
 
-## 🔑 Getting your free Gemini API key
+## 🔑 API keys
 
-> By default RoundTable AI uses **Google Gemini for all three agents** — so you
-> only need one key to get started. To mix providers, see the
-> [Multi-provider section](#-multi-provider-mode-the-fun-part) below.
+You only need a key for the providers you actually use in `squad.toml`.
 
-1. Go to **<https://aistudio.google.com/apikey>**
-2. Sign in with a Google account
-3. Click **"Create API key"** → "Create API key in new project"
-4. Copy the key (starts with `AIza…`)
-5. Open `pr_review_squad/.env` and paste it:
+### Default config (Gemini only)
 
-   ```bash
+The shipped `pr_review_squad/squad.toml` uses **Gemini for all three agents**, so
+**one free key is enough to run everything:**
+
+1. Go to <https://aistudio.google.com/apikey> → sign in → **Create API key**
+2. Paste it into `pr_review_squad/.env`:
+   ```ini
    GEMINI_API_KEY=AIzaSy...your-key-here
    ```
 
-Google AI Studio's free tier currently includes generous quota on
-`gemini-2.0-flash` — plenty for running this tool dozens of times a day.
+### Want to use Groq too?
+
+Groq is also free and **insanely fast** (sub-second responses). After grabbing a
+key at <https://console.groq.com/keys>, activate the preset:
+
+```bash
+cp pr_review_squad/squad.gemini-groq.toml.example pr_review_squad/squad.toml
+```
+
+Then add both keys to `.env`:
+
+```ini
+GEMINI_API_KEY=AIzaSy...
+GROQ_API_KEY=gsk_...
+```
+
+Run `make demo` again — the round-table panel will now show two different
+providers in the seats.
 
 ---
 
-## 🌐 Multi-provider mode (the fun part)
+## 🌐 The six supported providers
 
-RoundTable AI talks to LLMs via the **OpenAI-compatible Chat Completions API**,
-so any provider that speaks it works out of the box. Six are pre-wired:
+| Provider     | Env var               | Free tier?    | Sign-up                                                |
+|--------------|-----------------------|---------------|--------------------------------------------------------|
+| Gemini       | `GEMINI_API_KEY`      | ✅ generous   | <https://aistudio.google.com/apikey>                   |
+| Groq         | `GROQ_API_KEY`        | ✅ generous   | <https://console.groq.com/keys>                        |
+| xAI Grok     | `XAI_API_KEY`         | small credit  | <https://console.x.ai/>                                |
+| OpenRouter   | `OPENROUTER_API_KEY`  | some free models | <https://openrouter.ai/keys>                        |
+| DeepSeek     | `DEEPSEEK_API_KEY`    | small credit  | <https://platform.deepseek.com/api_keys>               |
+| OpenAI       | `OPENAI_API_KEY`      | ❌ paid       | <https://platform.openai.com/api-keys>                 |
 
-| Provider | Env var | Free tier? | Notes |
-|---|---|---|---|
-| Google Gemini | `GEMINI_API_KEY` | ✅ generous | Fast, great at code |
-| xAI Grok | `XAI_API_KEY` | small credit | Conversational, witty |
-| OpenRouter | `OPENROUTER_API_KEY` | some free models | Aggregator: Claude, GPT, Llama, … |
-| OpenAI | `OPENAI_API_KEY` | ❌ paid | GPT-4o, o1, … |
-| DeepSeek | `DEEPSEEK_API_KEY` | small credit | deepseek-chat, deepseek-reasoner |
-| Groq | `GROQ_API_KEY` | ✅ generous | Sub-second inference on Llama/Mixtral |
+All six are reached through the OpenAI-compatible Chat Completions API — RoundTable
+AI just swaps `base_url` per provider. Adding a 7th provider is a 5-line dict entry
+in [`pr_review_squad/providers.py`](pr_review_squad/providers.py).
 
-### Pick a model per agent — edit `pr_review_squad/squad.toml`
+---
+
+## 🎛️ Mixing providers per agent
+
+Edit `pr_review_squad/squad.toml`. Each agent gets its own `provider` and `model`:
 
 ```toml
 [security_auditor]
-# Anthropic Claude is famously careful — ideal for security review.
 provider = "openrouter"
 model = "anthropic/claude-3.5-haiku"
 
 [optimization_expert]
-# Gemini Flash has strong, fast code reasoning.
 provider = "gemini"
 model = "gemini-2.0-flash"
 
 [tech_lead]
-# Grok writes warm, conversational prose — great for PR comments.
 provider = "grok"
 model = "grok-2-latest"
 ```
 
-Then drop the matching keys into `pr_review_squad/.env` and run `make demo`.
+Two ready-made presets ship with the repo — copy whichever you like over `squad.toml`:
 
-A ready-to-use config ships at
-[`pr_review_squad/squad.multi-provider.toml.example`](pr_review_squad/squad.multi-provider.toml.example) —
-just `cp` it over `squad.toml` to activate.
+| Preset file | What it does |
+|---|---|
+| `squad.gemini-groq.toml.example` | Free-tier-only mix (Gemini + Groq Llama) |
+| `squad.multi-provider.toml.example` | Showcase mix (Claude · Gemini · Grok) |
 
-### What you'll see
-
-```
-╭───────────── 🪑 The Round Table ──────────────╮
-│ 🔐 Security Auditor    openrouter  anthropic/claude-3.5-haiku │
-│ ⚡ Optimization Expert  gemini      gemini-2.0-flash           │
-│ 🧑‍💼 Tech Lead            grok        grok-2-latest              │
-╰───────────────────────────────────────────────╯
-```
-
-Each agent's panel labels which provider/model produced its output, and the
-final synthesised PR comment is tagged with the Tech Lead's model in its
-subtitle — so when you screen-record a demo, the multi-provider story is
-visible at a glance.
+Don't forget to add the matching keys to `.env`.
 
 ---
 
 ## 🧑‍💻 Usage
 
-### Mode 1 — Bundled sample (no setup, great for demos)
+### Bundled sample (great for demos)
 
 ```bash
 make demo
@@ -164,159 +201,44 @@ make demo
 python pr_review_squad/cli.py --sample
 ```
 
-Runs the agents over `pr_review_squad/samples/sample_diff.txt`, a deliberately
-vulnerable Python file (SQL injection, MD5 password hashing, command injection,
-hardcoded credentials, O(n²) lookup, redundant loops). Perfect for a screen-recorded demo.
+Reviews `pr_review_squad/samples/sample_diff.txt` — a deliberately vulnerable file
+containing SQL injection, MD5 password hashing, command injection, hardcoded
+credentials, an O(n²) lookup, and redundant loops.
 
-### Mode 2 — A local diff file
+### A local diff file
 
 ```bash
-# generate a diff first
 git diff main..my-feature > my.diff
-
-# review it
 make review FILE=my.diff
-# equivalent to:
-python pr_review_squad/cli.py --file my.diff
 ```
 
-Accepts any unified diff — output of `git diff`, `git show`, `git format-patch`, etc.
-
-### Mode 3 — A live GitHub Pull Request
+### A live GitHub PR
 
 ```bash
 make pr URL=https://github.com/psf/requests/pull/6800
-# equivalent to:
-python pr_review_squad/cli.py --pr-url https://github.com/psf/requests/pull/6800
 ```
 
-Fetches the unified diff straight from GitHub's REST API.
-- **Public PRs:** works out of the box (anonymous, 60 requests/hour).
-- **Private PRs or higher rate limit:** add a `GITHUB_TOKEN` to `.env`. Generate one at
-  <https://github.com/settings/tokens> — no scopes needed for public repos; the `repo`
-  scope is enough for private ones.
+For private PRs, add a `GITHUB_TOKEN` to `.env` (create at <https://github.com/settings/tokens>).
 
 ---
 
-## 🎛️ CLI reference
-
-```text
-pr-review-squad [--sample | --file FILE | --pr-url URL]
-                [--model MODEL] [--no-save] [--no-clipboard]
-```
-
-| Flag | Description |
-|---|---|
-| `--sample` | Use the bundled vulnerable sample diff |
-| `--file PATH` | Review a unified diff from a local file |
-| `--pr-url URL` | Review a live GitHub PR (`https://github.com/<owner>/<repo>/pull/<n>`) |
-| `--config PATH` | Use a non-default `squad.toml` (defaults to `pr_review_squad/squad.toml`) |
-| `--provider NAME` | Force **all three** agents to one provider (`gemini` / `grok` / `openrouter` / `openai` / `deepseek` / `groq`) |
-| `--model NAME` | Force **all three** agents to one model |
-| `--no-stream` | Disable live token streaming (auto-disabled outside a TTY) |
-| `--output PATH` | Also write the synthesised PR comment to an explicit path (used by the GitHub Action) |
-| `--fail-on {security\|optimization\|any}` | **CI gate mode** — exit non-zero when the chosen check fails |
-| `--no-save` | Skip writing the markdown file (useful in CI) |
-| `--no-clipboard` | Skip copying to clipboard (useful in CI / headless) |
-| `-h, --help` | Show the built-in help |
-
-### Make targets
-
-| Command | What it does |
-|---|---|
-| `make install` | Install Python dependencies |
-| `make demo` | Run on the bundled sample diff |
-| `make review FILE=path.diff` | Run on a local diff file |
-| `make pr URL=https://github.com/.../pull/N` | Run on a live GitHub PR |
-| `make clean` | Delete generated review markdown files |
-| `make help` | List all targets |
-
----
-
-## 📤 What you'll see
-
-A run looks roughly like this in your terminal:
-
-```
-  ____  ____    ____            _                ____                       _
- |  _ \|  _ \  |  _ \ _____   _(_) _____      __/ ___|  __ _ _   _  __ _  __| |
- | |_) | |_) | | |_) / _ \ \ / / |/ _ \ \ /\ / /\___ \ / _` | | | |/ _` |/ _` |
- |  __/|  _ <  |  _ <  __/\ V /| |  __/\ V  V /  ___) | (_| | |_| | (_| | (_| |
- |_|   |_| \_\ |_| \_\___| \_/ |_|\___| \_/\_/  |____/ \__, |\__,_|\__,_|\__,_|
-                                                          |_|
-
-source: sample (sample_diff.txt)    model: gemini-2.0-flash
-
-┌── git diff ───────────────────────────────────────────────────────────┐
-│  + def get_user_by_email(email):                                      │
-│  +     query = "SELECT ... WHERE email = '" + email + "'"             │
-│  ...                                                                  │
-└───────────────────────────────────────────────────────────────────────┘
-
-┌── 🔐 Security Auditor ─────────────────────────────────────────────────┐
-│  • SQL Injection in get_user_by_email                                  │
-│  • Hardcoded API key leaked in source                                  │
-│  • MD5 password hashing is broken                                      │
-└───────────────────────────────────────────────────────────────────────┘
-
-┌── ⚡ Optimization Expert ──────────────────────────────────────────────┐
-│  1. list_active_users makes two passes; merge into one comprehension.  │
-│  2. find_user is O(n²); replace inner loop or use a dict lookup.       │
-└───────────────────────────────────────────────────────────────────────┘
-
-─────────────────────── Final PR Comment ───────────────────────────────
-
-┌───────────────────────────────────────────────────────────────────────┐
-│  Great work pushing this feature forward! 🎉                          │
-│                                                                       │
-│  🚨 Security                                                          │
-│  • SQL injection in get_user_by_email – use parameterised queries.    │
-│  • Hardcoded API key must be revoked and moved to env vars.           │
-│  • Switch MD5 → bcrypt/argon2 for password hashing.                   │
-│                                                                       │
-│  💡 Suggestions for Improvement                                       │
-│  • Collapse list_active_users into one comprehension.                 │
-│  • find_user is O(n²); a single loop is enough.                       │
-└───────────────────────────────────────────────────────────────────────┘
-
-📝 Saved to pr_review_squad/reviews/review_20260522_204521.md
-📋 Copied to clipboard
-```
-
-The saved `.md` file is **GitHub-ready** — paste it straight into a PR comment.
-
----
-
-## 🤖 Running on your own PRs (GitHub Action)
+## 🤖 GitHub Action (auto-review every PR)
 
 The repo ships a ready-to-use workflow at
-[`.github/workflows/roundtable.yml`](.github/workflows/roundtable.yml). When
-installed on a repo, **every pull request gets a round-table review posted as a
-comment** within ~30 seconds of being opened.
+[`.github/workflows/roundtable.yml`](.github/workflows/roundtable.yml). Once
+installed on your repo, **every pull request gets a round-table review posted
+as a comment** within ~30 seconds of being opened.
 
 ### Setup (one-time, 60 seconds)
 
 1. Push this repo (or fork it) to GitHub.
-2. Go to **Settings → Secrets and variables → Actions → New repository secret**
-   and add the keys you use in `squad.toml`. At minimum:
-
-   | Secret name | When you need it |
-   |---|---|
-   | `GEMINI_API_KEY` | If any agent uses `gemini` |
-   | `OPENROUTER_API_KEY` | If any agent uses `openrouter` |
-   | `XAI_API_KEY` | If any agent uses `grok` |
-   | `GROQ_API_KEY` | If any agent uses `groq` |
-   | `DEEPSEEK_API_KEY` | If any agent uses `deepseek` |
-   | `OPENAI_API_KEY` | If any agent uses `openai` |
-
-3. That's it. Open a pull request — the comment lands in the PR within a
-   minute and the full markdown is also added to the Action's job summary.
+2. **Settings → Secrets and variables → Actions → New repository secret** — add
+   the keys for the providers your `squad.toml` uses (minimum: `GEMINI_API_KEY`).
+3. Open a pull request. The squad's comment lands within a minute.
 
 ### Make it a merge gate
 
-By default the action is **informative only** — it posts the comment but won't
-block a merge. To turn it into a hard gate, append `--fail-on any` (or
-`security` / `optimization`) to the `Run the round table` step:
+Append `--fail-on any` to the workflow's run step:
 
 ```yaml
 - run: |
@@ -327,17 +249,52 @@ block a merge. To turn it into a hard gate, append `--fail-on any` (or
       --fail-on any
 ```
 
-Then require this check in **Settings → Branches → Branch protection rules**
-and merges are blocked until the squad gives both ✓.
+Then require this check in **Settings → Branches → Branch protection rules**.
 
 ### Local CI gate (no Action needed)
-
-You can also run the gate in a pre-push hook or any CI system:
 
 ```bash
 # Exits 1 if security issues are found, 0 otherwise
 python pr_review_squad/cli.py --file my.diff --fail-on security --no-clipboard
 ```
+
+---
+
+## 🎛️ CLI reference
+
+```text
+roundtable-ai [--sample | --file FILE | --pr-url URL]
+              [--config PATH] [--provider NAME] [--model NAME]
+              [--no-stream] [--output PATH]
+              [--fail-on {security,optimization,any}]
+              [--no-save] [--no-clipboard]
+```
+
+| Flag | Description |
+|---|---|
+| `--sample` | Use the bundled vulnerable sample diff |
+| `--file PATH` | Review a unified diff from a local file |
+| `--pr-url URL` | Review a live GitHub PR |
+| `--config PATH` | Use a non-default `squad.toml` |
+| `--provider NAME` | Force all three agents to one provider |
+| `--model NAME` | Force all three agents to one model |
+| `--no-stream` | Disable live token streaming (auto-off outside a TTY) |
+| `--output PATH` | Also write the PR comment to an explicit path |
+| `--fail-on …` | **CI gate** — exit non-zero when the check fails |
+| `--no-save` | Skip writing the markdown to `reviews/` |
+| `--no-clipboard` | Skip clipboard copy |
+| `-h, --help` | Show built-in help |
+
+### Make targets
+
+| Command | What it does |
+|---|---|
+| `make install` | Install Python dependencies |
+| `make demo` | Run on the bundled sample diff |
+| `make review FILE=path.diff` | Run on a local diff file |
+| `make pr URL=...` | Run on a live GitHub PR |
+| `make clean` | Delete generated review markdown |
+| `make help` | List all targets |
 
 ---
 
@@ -347,28 +304,28 @@ python pr_review_squad/cli.py --file my.diff --fail-on security --no-clipboard
 <summary><b>"Missing API key(s) for your squad.toml"</b></summary>
 
 The CLI lists exactly which env var is missing and where to sign up. Open
-`pr_review_squad/.env`, paste the missing key, and re-run.
+`pr_review_squad/.env`, paste the missing key, save, and re-run.
 
-If you only want to run with Gemini, make sure your `squad.toml` still uses
-`provider = "gemini"` for all three agents (that's the default).
+If you only want Gemini, make sure `squad.toml` still uses `provider = "gemini"`
+for all three agents (the shipped default).
 </details>
 
 <details>
-<summary><b>"LLM call failed: 404 ... not found"</b></summary>
+<summary><b>"LLM call failed: 404 ... model not found"</b></summary>
 
 The model name in `squad.toml` (or your `--model` flag) doesn't exist for that
-provider. A few safe defaults per provider:
+provider. Try a known-good model from this table:
 
 | Provider | Known-good model |
 |---|---|
 | `gemini` | `gemini-2.0-flash`, `gemini-2.5-flash` |
+| `groq` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
 | `grok` | `grok-2-latest`, `grok-3` |
 | `openrouter` | `anthropic/claude-3.5-haiku`, `meta-llama/llama-3.3-70b-instruct` |
 | `openai` | `gpt-4o-mini`, `gpt-4o` |
 | `deepseek` | `deepseek-chat`, `deepseek-reasoner` |
-| `groq` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
 
-Quick override without editing TOML:
+Quick test without editing TOML:
 
 ```bash
 python pr_review_squad/cli.py --sample --provider gemini --model gemini-2.5-flash
@@ -379,96 +336,163 @@ python pr_review_squad/cli.py --sample --provider gemini --model gemini-2.5-flas
 <summary><b>"LLM call failed: 401 ... unauthorized"</b></summary>
 
 The API key for that provider is wrong/expired. Re-check `.env` (no quotes, no
-trailing spaces) and that you're using the matching env var (e.g. `XAI_API_KEY`
-not `GROK_API_KEY`).
+trailing spaces) and confirm you're using the matching env var (e.g.
+`XAI_API_KEY` for Grok, not `GROK_API_KEY`).
 </details>
 
 <details>
 <summary><b>"Clipboard unavailable on this system"</b></summary>
 
-You're running in a headless environment (SSH, Docker, WSL without an X server).
-The markdown is still saved to `reviews/` — just `cat` it and copy by hand.
-On Linux desktops you can install `xclip` or `xsel` to enable clipboard support:
-
-```bash
-sudo apt-get install xclip
-```
+You're in a headless environment (SSH, Docker, WSL without an X server).
+The markdown is still saved to `reviews/` — open it and copy manually.
+On Linux desktops: `sudo apt-get install xclip` enables clipboard support.
 </details>
 
 <details>
 <summary><b>"GitHub rate-limited the request (403)"</b></summary>
 
-Anonymous GitHub API access is capped at 60 requests/hour. Generate a personal
-access token at <https://github.com/settings/tokens> (no scopes needed for
-public repos) and add it to `.env`:
+Anonymous GitHub API access is capped at 60 requests/hour. Add a personal
+access token (no scopes needed for public repos) to `.env`:
 
-```bash
+```ini
 GITHUB_TOKEN=ghp_yourtokenhere
 ```
-
-This raises the limit to 5,000/hour.
 </details>
 
 <details>
 <summary><b>"PR not found (404)"</b></summary>
 
-Either the URL is wrong (expected format: `https://github.com/<owner>/<repo>/pull/<number>`)
-or the PR is in a private repo. For private repos add a `GITHUB_TOKEN` with the `repo` scope.
+Either the URL is malformed (expected `https://github.com/<owner>/<repo>/pull/<n>`)
+or the PR is private. For private repos add a `GITHUB_TOKEN` with `repo` scope.
 </details>
 
 ---
 
-## 📁 Project layout
+## ❓ FAQ
+
+<details>
+<summary><b>Why three agents instead of one big prompt?</b></summary>
+
+Specialised personas give measurably more focused output than a single
+generalist prompt. The Security agent ignores naming, the Optimization agent
+ignores security, and the Tech Lead doesn't have to do raw analysis — it only
+synthesises. Each piece does one job well.
+</details>
+
+<details>
+<summary><b>Why OpenAI-compatible base-URL switching instead of LiteLLM?</b></summary>
+
+Zero dependency bloat and a clearer mental model. Every major provider already
+exposes an OpenAI-compatible endpoint; swapping `base_url` is enough to talk to
+six providers with one SDK. Adding a seventh is a 5-line dict entry in
+[`providers.py`](pr_review_squad/providers.py).
+</details>
+
+<details>
+<summary><b>Does this send my private code to a third party?</b></summary>
+
+Only if you point it at a hosted LLM provider — which is what every agent in
+the default config does. The unified diff (added/removed lines only) is sent to
+whichever provider that agent uses. Inspect `agents.py` to confirm. If your
+threat model forbids cloud LLMs, point all three agents at a local
+OpenAI-compatible endpoint (Ollama, LM Studio, vLLM) by adding a new
+`ProviderSpec`.
+</details>
+
+<details>
+<summary><b>Can I add more agents (e.g. an Accessibility Auditor)?</b></summary>
+
+Yes — see the dictionary `AGENT_PROMPTS` in
+[`pr_review_squad/agents.py`](pr_review_squad/agents.py). Add a new key + system
+prompt, then wire it into `cli.py`'s `run()`. The current trio is the minimum
+useful set, not a hard limit.
+</details>
+
+---
+
+## 🏗️ How it works
+
+```
+cli.py        ─┬─→  loads squad.toml + .env
+               ├─→  builds one OpenAI client per unique provider
+               ├─→  runs Security → Optimization → Tech Lead in sequence
+               └─→  saves markdown + copies to clipboard + (optional) --output
+
+agents.py     ─→ LLMAgent: a (system_prompt, OpenAI client, model) bundle
+                 with .run() and .stream() methods.
+
+providers.py  ─→ Catalog of 6 ProviderSpecs + squad.toml loader + client factory.
+                 Adding a provider = one dict entry.
+
+github_fetcher.py ─→ Parses a PR URL, fetches `application/vnd.github.v3.diff`.
+
+.github/workflows/roundtable.yml ─→ The Action that runs the squad on PRs and
+                                    posts the comment.
+```
+
+## 📁 Project structure
 
 ```
 RoundTable-Ai/
 ├── .github/workflows/roundtable.yml      # auto-reviews every PR on this repo
+├── CONTRIBUTING.md
+├── LICENSE
 ├── Makefile                              # one-command shortcuts
 ├── README.md                             # ← you're reading it
 ├── .python-version                       # pyenv hint (3.11)
 └── pr_review_squad/
     ├── cli.py                            # argparse + rich UI + orchestration
     ├── agents.py                         # 3 system prompts + LLMAgent wrapper
-    ├── providers.py                      # provider catalog + squad config loader
+    ├── providers.py                      # provider catalog + squad.toml loader
     ├── github_fetcher.py                 # GitHub REST API → unified diff
     ├── squad.toml                        # which provider+model each agent uses
-    ├── squad.multi-provider.toml.example # ready-to-cp multi-provider config
+    ├── squad.gemini-groq.toml.example    # free-tier preset (Gemini + Groq)
+    ├── squad.multi-provider.toml.example # showcase preset (Claude + Gemini + Grok)
     ├── requirements.txt
     ├── .env.example                      # copy → .env, paste your keys
     ├── samples/sample_diff.txt           # deliberately vulnerable demo file
     └── reviews/                          # auto-generated PR-comment markdown
 ```
 
----
-
-## 🧭 Roadmap
-
-- [ ] **`pip install .` entry-point** so `roundtable-ai` is a real binary on `$PATH`
-- [ ] **Token / cost summary** per agent at end of run (extra interesting with multi-provider)
-- [ ] **`gh` CLI integration** to auto-post comments from the local CLI too
-- [ ] **Web UI** (optional layer: same backend, paste-diff/PR-URL form, hosted demo)
-- [x] ~~**Pluggable provider abstraction** — done in v2~~
-- [x] ~~**Streaming agent output** — done in v3~~
-- [x] ~~**GitHub Action** that auto-reviews PRs on this repo — done in v3~~
-- [x] ~~**CI gate mode** (`--fail-on`) — done in v3~~
-
----
-
-## 📜 Manual setup (no `make`)
-
-If you can't or don't want to use `make`:
+## <a name="manual-setup"></a>📦 Manual setup (no `make`)
 
 ```bash
 git clone https://github.com/MadhushanAndawaththa/RoundTable-Ai.git
 cd RoundTable-Ai/pr_review_squad
 python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                  # then paste your Gemini key
+cp .env.example .env                                  # then paste your keys
 python cli.py --sample
 ```
 
 ---
 
-## 📄 License
+## 🧭 Roadmap
 
-MIT — do whatever you like, attribution appreciated.
+- [x] **3-agent pipeline** (Security · Optimization · Tech Lead)
+- [x] **Six providers** via OpenAI-compatible base-URL switching
+- [x] **Per-agent provider mixing** via `squad.toml`
+- [x] **Live token streaming** in the terminal
+- [x] **GitHub Action** that auto-reviews PRs
+- [x] **CI gate mode** (`--fail-on`)
+- [ ] `pip install .` entry-point so `roundtable-ai` is on `$PATH`
+- [ ] Token / cost summary per agent at end of run
+- [ ] `gh` CLI integration to auto-post comments from local CLI
+- [ ] Optional web UI (paste-diff / PR-URL form, BYO key)
+
+---
+
+## 🙌 Contributing
+
+PRs and issues welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Be aware: every PR you open on this repo gets reviewed by the squad itself.
+
+## 📜 License
+
+[MIT](LICENSE) — do whatever you like, attribution appreciated.
+
+## 🙏 Acknowledgments
+
+Inspired by the [Build3rs Stack](https://build3rs.dev) prompt format. The
+three-agent architecture mirrors how real engineering teams already split a
+code review between security, performance, and team-lead sign-off.

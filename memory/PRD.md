@@ -40,6 +40,13 @@ pr_review_squad/
 - ✅ Clear, friendly error when `GEMINI_API_KEY` is missing (with link to free-tier key)
 - ✅ End-to-end smoke test passing (rendering, save, clipboard fallback verified)
 
+## Iteration 5 (2026-05-23) — Open-source-standard polish
+- ✅ README rewritten to OSS conventions: centered title + tagline, badge row (CI, license, Python, providers, PRs welcome), TOC nav links, ASCII architecture, **Features** list, "what a run looks like" demo block, FAQ section, "How it works" walkthrough, Acknowledgments
+- ✅ Added `LICENSE` (MIT)
+- ✅ Added `CONTRIBUTING.md` with quick setup, issue template, PR guidelines, "how to add a new provider" guide
+- ✅ Added third squad preset: `squad.gemini-groq.toml.example` (free-tier-only mix using Gemini + Groq)
+- ✅ Cleaned project-structure tree to reflect the new top-level files
+
 ## Iteration 4 (2026-05-23) — Path A: GitHub Action + streaming + CI gate 🚀
 - ✅ **Streaming** agent output: tokens stream into a transient `rich.Live` panel during generation, then get replaced by a fully-rendered Markdown panel
 - ✅ Auto-disables streaming in non-TTY environments (CI, piped output)

@@ -1,0 +1,21 @@
+# Mix of Google Gemini (free) + Groq (free, blazing fast).
+# To activate: copy this file over squad.toml.
+#
+#   cp pr_review_squad/squad.gemini-groq.toml.example pr_review_squad/squad.toml
+#
+# Then add both GEMINI_API_KEY and GROQ_API_KEY to your .env file.
+
+[security_auditor]
+# Gemini is methodical and careful — well-suited to security review.
+provider = "gemini"
+model = "gemini-2.0-flash"
+
+[optimization_expert]
+# Groq + Llama is sub-second fast and great at spotting code smells.
+provider = "groq"
+model = "llama-3.3-70b-versatile"
+
+[tech_lead]
+# Groq + Llama again for a warm, fast synthesis pass.
+provider = "groq"
+model = "llama-3.3-70b-versatile"
