@@ -1,20 +1,23 @@
-# Which model each agent uses. Edit me to mix providers.
+# Which provider/model each agent uses. Edit me to mix providers.
 #
 # Supported providers: gemini, grok, openrouter, openai, deepseek, groq
 # Each provider needs its matching API key in .env (see .env.example).
 #
-# This default config uses Gemini for all three seats so you only need a
-# single free GEMINI_API_KEY to get running. For a true multi-provider setup,
-# copy squad.multi-provider.toml.example over this file and add the keys.
+# Default config is Groq-only so one free GROQ_API_KEY is enough to get
+# running. The two reviewer seats use the higher-throughput 8B model; the
+# tech lead uses the stronger 70B model for the final synthesis.
+#
+# Temporary override without editing this file:
+#   python cli.py --sample --provider groq --model llama-3.1-8b-instant
 
 [security_auditor]
-provider = "gemini"
-model = "gemini-2.0-flash"
+provider = "groq"
+model = "llama-3.1-8b-instant"
 
 [optimization_expert]
-provider = "gemini"
-model = "gemini-2.0-flash"
+provider = "groq"
+model = "llama-3.1-8b-instant"
 
 [tech_lead]
-provider = "gemini"
-model = "gemini-2.0-flash"
+provider = "groq"
+model = "llama-3.3-70b-versatile"
