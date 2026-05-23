@@ -97,7 +97,7 @@ cd RoundTable-Ai
 # 2. Install Python deps
 make install
 
-# 3. Create your .env (then paste your Gemini key inside — see next section)
+# 3. Create your .env (then paste the key for the provider(s) your squad.toml uses)
 cp pr_review_squad/.env.example pr_review_squad/.env
 
 # 4. Run the demo on a bundled vulnerable sample diff
@@ -113,21 +113,28 @@ PR comment will land in `pr_review_squad/reviews/`.
 
 You only need a key for the providers you actually use in `squad.toml`.
 
-### Default config (Gemini only)
+Any supported AI provider key can be used here: Gemini, Groq, xAI Grok,
+OpenRouter, DeepSeek, or OpenAI. The only rule is that the key in `.env` must
+match the `provider` values in `pr_review_squad/squad.toml`.
 
-The shipped `pr_review_squad/squad.toml` uses **Gemini for all three agents**, so
-**one free key is enough to run everything:**
+### Current repo default (Groq)
 
-1. Go to <https://aistudio.google.com/apikey> → sign in → **Create API key**
+The current `pr_review_squad/squad.toml` in this repo uses **Groq for all three
+agents**, so **one free key is enough to run everything as-is:**
+
+1. Go to <https://console.groq.com/keys> → sign in → **Create API key**
 2. Paste it into `pr_review_squad/.env`:
    ```ini
-   GEMINI_API_KEY=AIzaSy...your-key-here
+  GROQ_API_KEY=gsk_...your-key-here
    ```
 
-### Want to use Groq too?
+### Want to use a different provider or mix providers?
 
-Groq is also free and **insanely fast** (sub-second responses). After grabbing a
-key at <https://console.groq.com/keys>, activate the preset:
+RoundTable AI is not locked to one vendor. You can use one provider for all
+three agents, or mix providers per agent, by editing `pr_review_squad/squad.toml`.
+After that, add only the matching key(s) to `.env`.
+
+For example, if you want the included free-tier Gemini + Groq preset, activate it:
 
 ```bash
 cp pr_review_squad/squad.gemini-groq.toml.example pr_review_squad/squad.toml
@@ -142,6 +149,10 @@ GROQ_API_KEY=gsk_...
 
 Run `make demo` again — the round-table panel will now show two different
 providers in the seats.
+
+If you prefer a single-provider setup instead, set all three `provider =` values
+in `pr_review_squad/squad.toml` to the same provider and add that provider's key
+to `.env`.
 
 ---
 
@@ -233,7 +244,8 @@ as a comment** within ~30 seconds of being opened.
 
 1. Push this repo (or fork it) to GitHub.
 2. **Settings → Secrets and variables → Actions → New repository secret** — add
-   the keys for the providers your `squad.toml` uses (minimum: `GEMINI_API_KEY`).
+   the keys for the providers your `squad.toml` uses. With the current repo
+   default, that means `GROQ_API_KEY`.
 3. Open a pull request. The squad's comment lands within a minute.
 
 ### Make it a merge gate
@@ -306,8 +318,9 @@ roundtable-ai [--sample | --file FILE | --pr-url URL]
 The CLI lists exactly which env var is missing and where to sign up. Open
 `pr_review_squad/.env`, paste the missing key, save, and re-run.
 
-If you only want Gemini, make sure `squad.toml` still uses `provider = "gemini"`
-for all three agents (the shipped default).
+If you only want one provider, make sure all three sections in `squad.toml` use
+that provider and that the matching key is present in `.env`. The current repo
+default uses Groq.
 </details>
 
 <details>
@@ -319,7 +332,7 @@ provider. Try a known-good model from this table:
 | Provider | Known-good model |
 |---|---|
 | `gemini` | `gemini-2.0-flash`, `gemini-2.5-flash` |
-| `groq` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+| `groq` | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`, `qwen/qwen3-32b` |
 | `grok` | `grok-2-latest`, `grok-3` |
 | `openrouter` | `anthropic/claude-3.5-haiku`, `meta-llama/llama-3.3-70b-instruct` |
 | `openai` | `gpt-4o-mini`, `gpt-4o` |
@@ -392,7 +405,8 @@ six providers with one SDK. Adding a seventh is a 5-line dict entry in
 <summary><b>Does this send my private code to a third party?</b></summary>
 
 Only if you point it at a hosted LLM provider — which is what every agent in
-the default config does. The unified diff (added/removed lines only) is sent to
+the shipped config in this repo does today. The unified diff (added/removed
+lines only) is sent to
 whichever provider that agent uses. Inspect `agents.py` to confirm. If your
 threat model forbids cloud LLMs, point all three agents at a local
 OpenAI-compatible endpoint (Ollama, LM Studio, vLLM) by adding a new
