@@ -64,8 +64,8 @@
 
 ```
 🪑 The Round Table
-  🔐 Security Auditor      gemini       gemini-2.0-flash
-  ⚡ Optimization Expert   groq         llama-3.3-70b-versatile
+  🔐 Security Auditor      groq         llama-3.1-8b-instant
+  ⚡ Optimization Expert   groq         llama-3.1-8b-instant
   🧑‍💼 Tech Lead             groq         llama-3.3-70b-versatile
 
 [ syntax-highlighted git diff appears here ]
@@ -191,6 +191,22 @@ provider = "grok"
 model = "grok-2-latest"
 ```
 
+You can also use provider-aware model aliases when you do not want to memorize
+specific model IDs:
+
+```toml
+[security_auditor]
+provider = "groq"
+model = "default-fast"
+
+[tech_lead]
+provider = "groq"
+model = "default-best"
+```
+
+`default-fast` and `default-best` resolve to a built-in recommended model for
+that provider.
+
 Two ready-made presets ship with the repo — copy whichever you like over `squad.toml`:
 
 | Preset file | What it does |
@@ -216,6 +232,40 @@ Reviews `pr_review_squad/samples/sample_diff.txt` — a deliberately vulnerable 
 containing SQL injection, MD5 password hashing, command injection, hardcoded
 credentials, an O(n²) lookup, and redundant loops.
 
+### Current working tree (no temp `.diff` file needed)
+
+```bash
+python pr_review_squad/cli.py --git-diff
+
+# or:
+make review
+```
+
+This reviews your current unstaged working-tree changes directly via `git diff`.
+
+### Only staged changes
+
+```bash
+python pr_review_squad/cli.py --cached
+
+# or:
+make review-staged
+```
+
+This reviews only what you have already staged with `git add`.
+
+### Current branch/worktree against a base ref
+
+```bash
+python pr_review_squad/cli.py --against main
+
+# or:
+make review-against BASE=main
+```
+
+This compares your current branch and working tree against the merge-base with
+the base ref, which is useful before opening a PR.
+
 ### A local diff file
 
 ```bash
@@ -226,10 +276,22 @@ make review FILE=my.diff
 ### A live GitHub PR
 
 ```bash
-make pr URL=https://github.com/psf/requests/pull/6800
+make pr URL=https://github.com/owner/repo/pull/123
 ```
 
 For private PRs, add a `GITHUB_TOKEN` to `.env` (create at <https://github.com/settings/tokens>).
+
+### Preflight check
+
+```bash
+python pr_review_squad/cli.py --check
+
+# or:
+make check
+```
+
+This validates your `.env`, `squad.toml`, required API keys, alias resolution,
+and provider/model combinations without making any LLM calls.
 
 ---
 
@@ -275,8 +337,9 @@ python pr_review_squad/cli.py --file my.diff --fail-on security --no-clipboard
 ## 🎛️ CLI reference
 
 ```text
-roundtable-ai [--sample | --file FILE | --pr-url URL]
+roundtable-ai [--sample | --file FILE | --pr-url URL | --git-diff]
               [--config PATH] [--provider NAME] [--model NAME]
+              [--cached] [--against REF] [--check]
               [--no-stream] [--output PATH]
               [--fail-on {security,optimization,any}]
               [--no-save] [--no-clipboard]
@@ -285,11 +348,15 @@ roundtable-ai [--sample | --file FILE | --pr-url URL]
 | Flag | Description |
 |---|---|
 | `--sample` | Use the bundled vulnerable sample diff |
+| `--git-diff`, `--working-tree` | Review current unstaged working-tree changes |
 | `--file PATH` | Review a unified diff from a local file |
 | `--pr-url URL` | Review a live GitHub PR |
 | `--config PATH` | Use a non-default `squad.toml` |
 | `--provider NAME` | Force all three agents to one provider |
-| `--model NAME` | Force all three agents to one model |
+| `--model NAME` | Force all three agents to one model; supports `default-fast` and `default-best` |
+| `--cached` | Review staged changes via `git diff --cached` |
+| `--against REF` | Review your current branch/worktree against a base ref such as `main` |
+| `--check`, `--doctor` | Validate config and keys without calling an LLM |
 | `--no-stream` | Disable live token streaming (auto-off outside a TTY) |
 | `--output PATH` | Also write the PR comment to an explicit path |
 | `--fail-on …` | **CI gate** — exit non-zero when the check fails |
@@ -303,8 +370,12 @@ roundtable-ai [--sample | --file FILE | --pr-url URL]
 |---|---|
 | `make install` | Install Python dependencies |
 | `make demo` | Run on the bundled sample diff |
-| `make review FILE=path.diff` | Run on a local diff file |
+| `make review` | Run on current unstaged working-tree changes |
+| `make review FILE=path.diff` | Run on a saved local diff file |
+| `make review-staged` | Run on staged changes |
+| `make review-against BASE=main` | Run against a base ref such as `main` |
 | `make pr URL=...` | Run on a live GitHub PR |
+| `make check` | Validate keys, config, and model setup |
 | `make clean` | Delete generated review markdown |
 | `make help` | List all targets |
 
@@ -341,7 +412,7 @@ provider. Try a known-good model from this table:
 Quick test without editing TOML:
 
 ```bash
-python pr_review_squad/cli.py --sample --provider gemini --model gemini-2.5-flash
+python pr_review_squad/cli.py --sample --provider groq --model default-fast
 ```
 </details>
 
