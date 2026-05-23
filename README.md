@@ -81,6 +81,8 @@ Verdict
   ✓ Security check passed
   ✓ Optimization check passed
 ```
+<img width="992" height="747" alt="Screenshot 2026-05-24 012217" src="https://github.com/user-attachments/assets/dde8cd29-7688-43ee-a913-d8c67bd11903" />
+<img width="975" height="876" alt="Screenshot 2026-05-24 012137" src="https://github.com/user-attachments/assets/f7ad7d0c-6f5e-4915-a6bc-dee5b660dc50" />
 
 ---
 
