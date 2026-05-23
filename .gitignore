@@ -95,3 +95,4 @@ credentials.json
 pr_review_squad/reviews/*.md
 .ruff_cache/
 .pytest_cache/
+test_reports
